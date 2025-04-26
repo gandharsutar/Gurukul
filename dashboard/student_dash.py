@@ -357,6 +357,9 @@ def main():
             lessons_done = row['lessons_done']
             total_lessons = row['total_lessons']
 
+            # Calculate next chapter number based on lessons completed
+            next_chapter = min(lessons_done + 1, total_lessons)
+            
             if score < 80:
                 if time_spent < 40:
                     rec = f"📌 {student_name} should spend more time on {subject} fundamentals (current: {time_spent} min)"
@@ -379,6 +382,7 @@ def main():
                 'Subject': subject,
                 'Current Score': score,
                 'Recommended Lesson': next_lesson,
+                'Chapter': f"Chapter {next_chapter}",
                 'Priority': 'High' if score < 75 else 'Medium' if score < 85 else 'Low'
             })
 
@@ -389,12 +393,32 @@ def main():
 
     # Visualize recommendations
     st.markdown("## 🎯 Personalized Lesson Recommendations")
-    tab1, tab2 = st.tabs(["📋 Recommendation List", "📊 Priority Matrix"])
+    
+    # Create a priority value map to sort by priority
+    priority_map = {'High': 1, 'Medium': 2, 'Low': 3}
+    
+    # Add a numeric priority column for sorting
+    recommendations_df['priority_value'] = recommendations_df['Priority'].map(priority_map)
+    
+    # Sort by priority (high to low) and then by score (low to high) to find the most important lesson
+    sorted_recommendations = recommendations_df.sort_values(by=['priority_value', 'Current Score'], 
+                                                          ascending=[True, True])
+    
+    # Get the highest priority lesson
+    next_lesson = sorted_recommendations.iloc[0]
+    
+    # Create three tabs: Next Lesson, Recommendation List, and Priority Matrix
+    tab1, tab2, tab3 = st.tabs(["📋 Recommendation List","📊 Priority Matrix","📚 Next Lesson"])
 
     with tab1:
+        # Show the complete recommendation list
         # Add index starting from 1 instead of 0
         recommendations_df_display = recommendations_df.copy()
         recommendations_df_display.index = range(1, len(recommendations_df_display) + 1)
+        
+        # Reorder columns to show Chapter after Recommended Lesson
+        column_order = ['Subject', 'Current Score', 'Recommended Lesson', 'Chapter', 'Priority']
+        recommendations_df_display = recommendations_df_display[column_order]
         
         st.dataframe(
             recommendations_df_display.style
@@ -403,7 +427,7 @@ def main():
                                    'color: #2ecc71'),
                       subset=['Priority'])
             .set_properties(**{'font-size': '12pt'}),
-            height=400,
+            height=400,  # Restored full height for the standalone table
             use_container_width=True
         )
 
@@ -419,6 +443,7 @@ def main():
                 'Subject': True,
                 'Current Score': True,
                 'Recommended Lesson': True,
+                'Chapter': True,
                 'Priority': True
             },
             title='Lesson Recommendation Priorities'
@@ -430,7 +455,53 @@ def main():
             legend_title="Subject"
         )
         st.plotly_chart(fig, use_container_width=True)
+    with tab3:
+        # Show the next lesson recommendation
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.markdown(
+                f"""
+                <div style="background-color: {'#ffebee' if next_lesson['Priority'] == 'High' else '#fff8e1' if next_lesson['Priority'] == 'Medium' else '#e8f5e9'}; 
+                            padding: 20px; 
+                            border-radius: 10px;
+                            border-left: 5px solid {'#e53935' if next_lesson['Priority'] == 'High' else '#ffb300' if next_lesson['Priority'] == 'Medium' else '#43a047'};
+                            text-align: center;">
+                    <h3>Suggested Next Lesson</h3>
+                    <h4>{next_lesson['Recommended Lesson']}</h4>
+                    <h5>{next_lesson['Chapter']}</h5>
+                    <p>Subject: <b>{next_lesson['Subject']}</b></p>
+                    <p>Current Score: <b>{next_lesson['Current Score']}%</b></p>
+                    <p>Priority: <b>{next_lesson['Priority']}</b></p>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
+        
+        with col2:
+            st.markdown(
+                f"""
+                <div style="background-color: #f5f5f5; 
+                            padding: 20px; 
+                            border-radius: 10px;
+                            height: 100%;">
+                    <h3>Why This Lesson?</h3>
+                    <p>This lesson was selected because it's the highest priority based on:</p>
+                    <ul>
+                        <li>Current performance scores</li>
+                        <li>Priority level classification</li>
+                        <li>Subject progression needs</li>
+                    </ul>
+                    <p>{'Focus on building a strong foundation in this subject area.' if next_lesson['Priority'] == 'High' else 
+                        'Strengthen your understanding with targeted practice.' if next_lesson['Priority'] == 'Medium' else 
+                        'Extend your knowledge with advanced concepts.'}</p>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
 
+
+    
     # Detailed explanation
     with st.expander("ℹ️ How recommendations are determined"):
         st.markdown("""

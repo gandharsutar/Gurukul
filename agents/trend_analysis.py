@@ -30,7 +30,7 @@ def fetch_student_data(collection):
                 'time_spent': student['time_spent'][i],
                 'lessons_done': student['lessons_done'][i],
                 'total_lessons': student['total_lessons'][i],
-                'quiz_scores': student['quiz_scores'][i],
+                'quiz_scores': student['quiz_scores'][i],                
                 'attendance': student['attendance'][i],
                 'last_week_scores': student['last_week_scores'][i],
                 'target_scores': student['target_scores'][i]
@@ -47,13 +47,12 @@ def predict_student_performance(connection_string, db_name, collection_name):
     
 
     # Create target variable (trend: improve/decline/stagnant)
-    df['next_week_score'] = (df['quiz_scores'] + df['last_week_scores'])/2
     df['score_change'] = (df['quiz_scores'] - df['last_week_scores'])/2
     df['performance_trend'] = np.where(df['score_change'] > 2, 'improve',
                                      np.where(df['score_change'] < -2, 'decline', 'stagnant'))
 
     # Define Features and Target
-    features = ['time_spent', 'lessons_done', 'quiz_scores', 'attendance', 'last_week_scores']
+    features = ['time_spent', 'lessons_done', 'quiz_scores']
     target = 'performance_trend'
 
     X = df[features]
@@ -73,6 +72,21 @@ def predict_student_performance(connection_string, db_name, collection_name):
 
     # Make Predictions
     y_pred = model.predict(X_test_scaled)
+    
+    # Store y_pred in the next_week_score for test data points
+    test_indices = y_test.index
+    df.loc[test_indices, 'next_week_score'] = y_pred
+    
+    # Predict for remaining data points
+    train_indices = y_train.index
+    y_train_pred = model.predict(X_train_scaled)
+    df.loc[train_indices, 'next_week_score'] = y_train_pred
+    
+    # Create a numerical representation for visualization
+    df['score_numerical'] = df['quiz_scores']  # Start with current scores
+    # Adjust based on prediction category
+    df.loc[df['next_week_score'] == 'improve', 'score_numerical'] += 5
+    df.loc[df['next_week_score'] == 'decline', 'score_numerical'] -= 5
 
     # Evaluate Model
     print("Accuracy:", accuracy_score(y_test, y_pred))
@@ -81,14 +95,14 @@ def predict_student_performance(connection_string, db_name, collection_name):
 
     # Visualize the trends
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(x='quiz_scores', y='next_week_score', hue='performance_trend', 
+    sns.scatterplot(x='quiz_scores', y='score_numerical', hue='performance_trend', 
                    style='performance_trend', data=df, s=100)
     plt.plot([df['quiz_scores'].min(), df['quiz_scores'].max()], 
              [df['quiz_scores'].min(), df['quiz_scores'].max()], 'k--')  # Reference line
-    plt.title('Performance Trend Visualization')
+    plt.title('Student Performance')
     plt.xlabel('Current Quiz Scores')
     plt.ylabel('Next Week Scores')
-    plt.legend(title='Performance Trend')
+    plt.legend(title='Performance')
     plt.show()
 
     # Return the trained model and scaler for future predictions
@@ -102,5 +116,4 @@ if __name__ == "__main__":
     COLLECTION_NAME = "performance_data"
     
     model, scaler = predict_student_performance(CONNECTION_STRING, DB_NAME, COLLECTION_NAME)
-    
     
