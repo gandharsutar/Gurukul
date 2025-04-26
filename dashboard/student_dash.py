@@ -5,109 +5,25 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from streamlit_extras.metric_cards import style_metric_cards
+from pymongo import MongoClient
 
-# StudentAnomalyDetector class (from your original code)
-class StudentAnomalyDetector:
-    def __init__(self, student_data: dict):
-        self.data = student_data
-        self.anomalies = []
+# MongoDB Connection Functions
+def connect_to_mongodb(connection_string, db_name, collection_name):
+    """Connect to MongoDB and return the specified collection"""
+    client = MongoClient(connection_string)
+    db = client[db_name]
+    return db[collection_name]
 
-    def detect_all_anomalies(self):
-        """Run all anomaly checks and return results"""
-        self._check_quiz_score_drops()
-        self._check_attendance_low()
-        self._check_time_management()
-        self._check_progress_deviation()
-        self._check_session_time_gaps()
-        return self.get_anomaly_report()
-
-    def _check_quiz_score_drops(self) -> None:
-        """Detect >20% drop between last_week_scores and current quiz_scores"""
-        for subj, last, current in zip(
-            self.data['subjects'],
-            self.data['last_week_scores'],
-            self.data['quiz_scores']
-        ):
-            if last == 0:
-                continue  # Avoid division by zero
-            drop = (last - current) / last
-            if drop > 0.2:
-                self.anomalies.append(
-                    f"📉 Score Drop: {subj} score dropped by {drop:.0%} "
-                    f"(from {last} to {current})"
-                )
-
-    def _check_attendance_low(self) -> None:
-        """Flag subjects with attendance <85%"""
-        for subj, att in zip(self.data['subjects'], self.data['attendance']):
-            if att < 85:
-                self.anomalies.append(
-                    f"⏰ Low Attendance: {subj} has only {att}% attendance"
-                )
-
-    def _check_time_management(self) -> None:
-        """Identify subjects with high time spent but low lessons done"""
-        avg_time_per_lesson = [
-            t/l if l > 0 else 0 
-            for t, l in zip(
-                self.data['time_spent'], 
-                self.data['lessons_done']
-            )
-        ]
-        
-        threshold = np.percentile(avg_time_per_lesson, 75)  # Top 25% slowest
-        for subj, avg, time, lessons in zip(
-            self.data['subjects'],
-            avg_time_per_lesson,
-            self.data['time_spent'],
-            self.data['lessons_done']
-        ):
-            if avg > threshold:
-                self.anomalies.append(
-                    f"🐌 Time Sink: {subj} takes {avg:.1f} mins/lesson "
-                    f"(total {time} mins for {lessons} lessons)"
-                )
-
-    def _check_progress_deviation(self) -> None:
-        """Compare current scores to target scores"""
-        for subj, current, target in zip(
-            self.data['subjects'],
-            self.data['quiz_scores'],
-            self.data['target_scores']
-        ):
-            if current < target - 10:  # 10 points below target
-                self.anomalies.append(
-                    f"🎯 Off Target: {subj} is {target-current} points "
-                    f"below target ({current} vs {target})"
-                )
-    
-    def _check_session_time_gaps(self) -> None:
-        """Detect unusually large gaps between study sessions"""
-        if 'last_session_time' not in self.data or 'current_session_time' not in self.data:
-            return
-            
-        last_session = datetime.strptime(self.data['last_session_time'], '%Y-%m-%d %H:%M:%S')
-        current_session = datetime.strptime(self.data['current_session_time'], '%Y-%m-%d %H:%M:%S')
-        
-        gap = current_session - last_session
-        if gap > timedelta(days=3):  # 3 days threshold for large gap
-            self.anomalies.append(
-                f"⏳ Large Time Gap: {gap.days} days between sessions "
-                f"(last: {last_session.date()}, current: {current_session.date()})"
-            )
-            # Trigger mock alert message
-            self.anomalies.append("🚨 ALERT: Student may need re-engagement!")            
-
-    def get_anomaly_report(self) -> str:
-        """Generate formatted report"""
-        if not self.anomalies:
-            return "✅ No anomalies detected"
-        return "\n".join([
-            f"ANOMALY REPORT for {self.data['student_name']} (ID:{self.data['student_id']})",
-            "="*50,
-            *self.anomalies,
-            f"\nTotal anomalies found: {len(self.anomalies)}"
-        ])
+def fetch_student_data(collection, student_id=None):
+    """
+    Fetch student data from MongoDB
+    If student_id is provided, fetch only that student's data
+    Otherwise, fetch all students
+    """
+    if student_id:
+        return collection.find_one({"student_id": student_id})
+    else:
+        return list(collection.find({}))
 
 # Main App
 def main():
@@ -233,47 +149,77 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
+    # MongoDB Connection
+    CONNECTION_STRING = "mongodb://localhost:27017/"
+    DB_NAME = "student_db"
+    COLLECTION_NAME = "performance_data"
     
+    # Connect to MongoDB
+    try:
+        collection = connect_to_mongodb(CONNECTION_STRING, DB_NAME, COLLECTION_NAME)
+        all_students = fetch_student_data(collection)
+        
+        if not all_students:
+            st.error("No student data found in the database. Using sample data instead.")
+            # Fall back to sample data if MongoDB is empty
+            use_sample_data = True
+        else:
+            use_sample_data = False
+            
+            # Simply use the first student in the database
+            data = all_students[0]
+            
+    except Exception as e:
+        st.error(f"Error connecting to MongoDB: {e}. Using sample data instead.")
+        use_sample_data = True
 
-    # Sample Data
-    default_data = {
-        'student_id': 1,
-        'student_name': 'John Doe',
-        'subjects': ['Math', 'Science', 'English', 'History', 'Geography', 'Art'],
-        'time_spent': [45, 60, 30, 50, 40, 35],
-        'lessons_done': [2, 3, 1, 4, 2, 3],
-        'total_lessons': [10, 10, 10, 10, 10, 10],
-        'quiz_scores': [85, 92, 78, 85, 88, 90],
-        'attendance': [90, 95, 85, 100, 92, 88],
-        'last_week_scores': [82, 88, 75, 80, 85, 87],
-        'target_scores': [90, 95, 85, 90, 90, 92],
-        'last_session_time': '2023-05-01 14:30:00',
-        'current_session_time': '2023-05-05 15:45:00'
-    }
+    # Sample Data (fallback)
+    if use_sample_data:
+        default_data = {
+            'student_id': 1,
+            'student_name': 'John Doe',
+            'subjects': ['Math', 'Science', 'English', 'History', 'Geography', 'Art'],
+            'time_spent': [45, 60, 30, 50, 40, 35],
+            'lessons_done': [2, 3, 1, 4, 2, 3],
+            'total_lessons': [10, 10, 10, 10, 10, 10],
+            'quiz_scores': [85, 92, 78, 85, 88, 90],
+            'attendance': [90, 95, 85, 100, 92, 88],
+            'last_week_scores': [82, 88, 75, 80, 85, 87],
+            'target_scores': [90, 95, 85, 90, 90, 92],
+            'last_session_time': '2023-05-01 14:30:00',
+            'current_session_time': '2023-05-05 15:45:00'
+        }
+        data = default_data
 
-    # Use the default data without any input modifications
-    data = default_data.copy()  # This uses all the default values
-
-
+    # Display the main title
+    st.markdown("<div class='main-header'><h1>GURUKUL</h1></div>", unsafe_allow_html=True)
+    
+    # Student Profile Section - removed ID from display
+    st.markdown(f"<h2>Student Profile: {data['student_name']}</h2>", unsafe_allow_html=True)
+    
     # Create DataFrame for visualizations
     df = pd.DataFrame({
         'subject': data['subjects'],
         'time_spent': data['time_spent'],
         'lessons_done': data['lessons_done'],
-        'total_lessons': [10] * len(data['subjects']),  # Assuming 10 lessons per subject
+        'total_lessons': data['total_lessons'],
         'quiz_scores': data['quiz_scores'],
-        'next_week_score': [s + 3 for s in data['quiz_scores']],  # Simulated next week scores
         'attendance': data['attendance'],
         'last_week_scores': data['last_week_scores'],
         'target_scores': data['target_scores']
     })
-
-    # Main content
-    # Main title at the top of the page
-    st.markdown("<div class='main-header'><h1>GURUKUL</h1></div>", unsafe_allow_html=True)
-
-    # Student Profile Section
-   
+    
+    # Add next_week_score - either from MongoDB or calculate it
+    if 'next_week_score' in data and data['next_week_score']:
+        df['next_week_score'] = data['next_week_score']
+    else:
+        # If not available, predict based on trend
+        score_change = [(current - last) for current, last in zip(data['quiz_scores'], data['last_week_scores'])]
+        df['next_week_score'] = [current + change for current, change in zip(data['quiz_scores'], score_change)]
+    
+    # Add student name to the dataframe for recommendations
+    df['student_name'] = data['student_name']
+    
     # Row 1: Key Metrics
     st.markdown("## 📊 Performance Overview")
     col1, col2, col3, col4 = st.columns(4)
@@ -296,9 +242,6 @@ def main():
         st.metric(label="Lesson Completion", value=f"{completion_rate:.1f}%", delta="+8% from last week")
 
     style_metric_cards()
-
-           
-
 
     # Row 3: Detailed Metrics
     st.markdown("## 📚 Detailed Analysis")
@@ -392,36 +335,49 @@ def main():
     def generate_recommendations(student_data):
         recommendations = []
         
-        for _, row in student_data.iterrows():
-            name = student_data['student_name'] if 'student_name' in student_data else "Student"
+        # Check if student_data is a DataFrame or a dictionary
+        if isinstance(student_data, pd.DataFrame):
+            df_to_use = student_data
+            student_name = student_data['student_name'].iloc[0] if 'student_name' in student_data else "Student"
+        else:
+            # If we got a dictionary, convert it to the same format as before
+            df_to_use = pd.DataFrame({
+                'subject': student_data['subjects'],
+                'quiz_scores': student_data['quiz_scores'],
+                'time_spent': student_data['time_spent'],
+                'lessons_done': student_data['lessons_done'],
+                'total_lessons': student_data['total_lessons'],
+            })
+            student_name = student_data.get('student_name', "Student")
+            
+        for _, row in df_to_use.iterrows():
             subject = row['subject']
             score = row['quiz_scores']
             time_spent = row['time_spent']
             lessons_done = row['lessons_done']
+            total_lessons = row['total_lessons']
 
             if score < 80:
                 if time_spent < 40:
-                    rec = f"📌 {name} should spend more time on {subject} fundamentals (current: {time_spent} min)"
+                    rec = f"📌 {student_name} should spend more time on {subject} fundamentals (current: {time_spent} min)"
                     next_lesson = f"Core {subject} Concepts"
                 else:
-                    rec = f"📌 {name} needs targeted practice in {subject} (score: {score}%)"
+                    rec = f"📌 {student_name} needs targeted practice in {subject} (score: {score}%)"
                     next_lesson = f"{subject} Practice Exercises"
-            elif lessons_done < row['total_lessons'] * 0.5:
-                rec = f"📌 {name} should complete more {subject} lessons ({lessons_done}/{row['total_lessons']} done)"
+            elif lessons_done < total_lessons * 0.5:
+                rec = f"📌 {student_name} should complete more {subject} lessons ({lessons_done}/{total_lessons} done)"
                 next_lesson = f"Continue {subject} Curriculum"
             else:
                 if score >= 90:
-                    rec = f"📌 {name} is excelling in {subject} - consider advanced material"
+                    rec = f"📌 {student_name} is excelling in {subject} - consider advanced material"
                     next_lesson = f"Advanced {subject} Topics"
                 else:
-                    rec = f"📌 {name} is progressing well in {subject} - reinforce learning"
+                    rec = f"📌 {student_name} is progressing well in {subject} - reinforce learning"
                     next_lesson = f"{subject} Review & Application"
 
             recommendations.append({
-                'Student': name,
                 'Subject': subject,
                 'Current Score': score,
-                'Diagnosis': rec.split('📌 ')[1].split(' (')[0],
                 'Recommended Lesson': next_lesson,
                 'Priority': 'High' if score < 75 else 'Medium' if score < 85 else 'Low'
             })
@@ -436,8 +392,12 @@ def main():
     tab1, tab2 = st.tabs(["📋 Recommendation List", "📊 Priority Matrix"])
 
     with tab1:
+        # Add index starting from 1 instead of 0
+        recommendations_df_display = recommendations_df.copy()
+        recommendations_df_display.index = range(1, len(recommendations_df_display) + 1)
+        
         st.dataframe(
-            recommendations_df.style
+            recommendations_df_display.style
             .applymap(lambda x: 'color: #e74c3c' if 'High' in str(x) else 
                                   ('color: #f39c12' if 'Medium' in str(x) else 
                                    'color: #2ecc71'),
@@ -453,12 +413,22 @@ def main():
             x='Current Score',
             y='Priority',
             color='Subject',
-            hover_name='Student',
-            hover_data=['Diagnosis', 'Recommended Lesson'],
             symbol='Subject',
+            size=[70] * len(recommendations_df),  # Make all points the same larger size
+            hover_data={
+                'Subject': True,
+                'Current Score': True,
+                'Recommended Lesson': True,
+                'Priority': True
+            },
             title='Lesson Recommendation Priorities'
         )
-        fig.update_layout(yaxis={'categoryorder':'array', 'categoryarray':['High','Medium','Low']})
+        fig.update_layout(
+            yaxis={'categoryorder':'array', 'categoryarray':['High','Medium','Low']},
+            height=400,
+            showlegend=True,
+            legend_title="Subject"
+        )
         st.plotly_chart(fig, use_container_width=True)
 
     # Detailed explanation
