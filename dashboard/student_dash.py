@@ -244,7 +244,6 @@ def main():
         'lessons_done': [2, 3, 1, 4, 2, 3],
         'total_lessons': [10, 10, 10, 10, 10, 10],
         'quiz_scores': [85, 92, 78, 85, 88, 90],
-        'next_week_score': [88, 95, 80, 90, 92, 93],
         'attendance': [90, 95, 85, 100, 92, 88],
         'last_week_scores': [82, 88, 75, 80, 85, 87],
         'target_scores': [90, 95, 85, 90, 90, 92],
