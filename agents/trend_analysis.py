@@ -30,7 +30,7 @@ def fetch_student_data(collection):
                 'time_spent': student['time_spent'][i],
                 'lessons_done': student['lessons_done'][i],
                 'total_lessons': student['total_lessons'][i],
-                'quiz_scores': student['quiz_scores'][i],                
+                'quiz_scores': student['quiz_scores'][i],
                 'attendance': student['attendance'][i],
                 'last_week_scores': student['last_week_scores'][i],
                 'target_scores': student['target_scores'][i]
@@ -44,10 +44,13 @@ def predict_student_performance(connection_string, db_name, collection_name):
     collection = connect_to_mongodb(connection_string, db_name, collection_name)
     df = fetch_student_data(collection)
     
+    
+
     # Create target variable (trend: improve/decline/stagnant)
     df['next_week_score'] = (df['quiz_scores'] + df['last_week_scores'])/2
-    df['performance_trend'] = np.where(df['next_week_score'] > 2, 'improve',
-                                     np.where(df['next_week_score'] < -2, 'decline', 'stagnant'))
+    df['score_change'] = (df['quiz_scores'] - df['last_week_scores'])/2
+    df['performance_trend'] = np.where(df['score_change'] > 2, 'improve',
+                                     np.where(df['score_change'] < -2, 'decline', 'stagnant'))
 
     # Define Features and Target
     features = ['time_spent', 'lessons_done', 'quiz_scores', 'attendance', 'last_week_scores']
@@ -100,14 +103,4 @@ if __name__ == "__main__":
     
     model, scaler = predict_student_performance(CONNECTION_STRING, DB_NAME, COLLECTION_NAME)
     
-    # Example prediction function
-    def predict_performance_trend(time_spent, lessons_done, quiz_score, attendance, last_week_score):
-        input_data = scaler.transform([[time_spent, lessons_done, quiz_score, attendance, last_week_score]])
-        prediction = model.predict(input_data)[0]
-        probabilities = model.predict_proba(input_data)[0]
-        return prediction, probabilities
     
-    # Example prediction
-    trend, probs = predict_performance_trend(45, 3, 85, 90, 82)
-    print(f"\nPredicted Trend: {trend}")
-    print(f"Probabilities: {dict(zip(model.classes_, probs))}")
