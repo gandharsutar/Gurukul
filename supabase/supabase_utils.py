@@ -1,46 +1,91 @@
 import os
+from fastapi import FastAPI
+from supabase import create_client, Client
+from dotenv import load_dotenv
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LinearRegression
-from supabase import create_client
+from datetime import datetime, timedelta
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://qjriwcvexqvqvtegeokv.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqcml3Y3ZleHF2cXZ0ZWdlb2t2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3MTA3MjUsImV4cCI6MjA2MDI4NjcyNX0.qsAQ0DfTUwXBZb0BPLWa9XP1mqrhtkjzAxts_l9wyak")
+# Load environment variables from .env file
+load_dotenv()
 
-# Initialize Supabase client
-supabase= create_client(SUPABASE_URL, SUPABASE_KEY)
+# Set up Supabase using environment variables
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-response=supabase.table("learning_sessions").select("*").execute()
+def generate_feedback(data):
+    """Generate feedback based on learning history data"""
+    try:
+        if not data:
+            return "No learning history data available."
+        
+        # Convert data to DataFrame for easier analysis
+        df = pd.DataFrame(data)
+        
+        # Convert date columns to datetime
+        df['start_time'] = pd.to_datetime(df['start_time'])
+        df['end_time'] = pd.to_datetime(df['end_time'])
+        
+        # Calculate session duration in minutes
+        df['duration_minutes'] = (df['end_time'] - df['start_time']).dt.total_seconds() / 60
+        
+        # Group by user_id to analyze individual performance
+        feedback_messages = []
+        
+        for user_id, user_data in df.groupby('user_id'):
+            # Calculate user statistics
+            total_sessions = len(user_data)
+            avg_duration = user_data['duration_minutes'].mean()
+            total_time = user_data['duration_minutes'].sum()
+            
+            # Get the most recent session
+            recent_session = user_data.sort_values('start_time').iloc[-1]
+            
+            # Generate feedback message
+            message = f"User {user_id}:\n"
+            message += f"- Total learning sessions: {total_sessions}\n"
+            message += f"- Average session duration: {avg_duration:.1f} minutes\n"
+            message += f"- Total learning time: {total_time:.1f} minutes\n"
+            
+            # Add specific feedback based on recent activity
+            if recent_session['duration_minutes'] > avg_duration:
+                message += "- Recent session was longer than average - great dedication!\n"
+            elif recent_session['duration_minutes'] < avg_duration:
+                message += "- Recent session was shorter than average - consider longer study sessions.\n"
+            
+            # Add time-based feedback
+            if total_time < 60:
+                message += "- Consider increasing your study time to see better results.\n"
+            elif total_time > 300:
+                message += "- Excellent commitment to learning!\n"
+            
+            feedback_messages.append(message)
+        
+        return "\n\n".join(feedback_messages)
+    
+    except Exception as e:
+        return f"Error generating feedback: {str(e)}"
 
-df=pd.DataFrame(response.data)
-df.dropna(subset=["end_time"],inplace=True)
+def main():
+    try:
+        # Fetch learning history data
+        response = supabase.table("learning_history").select("*").execute()
+        data = response.data
+        
+        if not data:
+            print("No learning history data found.")
+            return
+        
+        # Generate and display feedback
+        feedback = generate_feedback(data)
+        print("\nLearning History Feedback:")
+        print(feedback)
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
 
-df["duration"]=df["end_time"]-df["start_time"]
+if __name__ == "__main__":
+    main()
 
-df["duration"]=df["duration"].dt.total_seconds()/60
-
-
-x=df.drop(["end_time","start_time","resources_used","sesison_notes"],axis=1)
-y=df["duration"]
-
-x_train,x_test,y_train,y_test=train_test_split(x,y,test_size=0.2,random_state=42)
-
-model=LinearRegression()
-model.fit(x_train,y_train)
-
-y_pred=model.predict(x_test)    
-
-sns.scatterplot(x=y_test,y=y_pred)
-plt.xlabel("Actual")
-plt.ylabel("Predicted")
-plt.title("Actual vs Predicted")
-plt.show()
-
-
-
-
-
+ 
