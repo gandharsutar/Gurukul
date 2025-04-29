@@ -14,16 +14,33 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e
 # Initialize Supabase client
 supabase= create_client(SUPABASE_URL, SUPABASE_KEY)
 
-response=supabase.table("time_tracking")  .select("*").execute()
+response=supabase.table("learning_sessions").select("*").execute()
 
 df=pd.DataFrame(response.data)
+df.dropna(subset=["end_time"],inplace=True)
 
-x=df.drop([],axis=1)
-y=df[""]
+df["duration"]=df["end_time"]-df["start_time"]
+
+df["duration"]=df["duration"].dt.total_seconds()/60
+
+
+x=df.drop(["end_time","start_time","resources_used","sesison_notes"],axis=1)
+y=df["duration"]
 
 x_train,x_test,y_train,y_test=train_test_split(x,y,test_size=0.2,random_state=42)
 
 model=LinearRegression()
 model.fit(x_train,y_train)
 
-y_pred=model.predict(x_test)
+y_pred=model.predict(x_test)    
+
+sns.scatterplot(x=y_test,y=y_pred)
+plt.xlabel("Actual")
+plt.ylabel("Predicted")
+plt.title("Actual vs Predicted")
+plt.show()
+
+
+
+
+
