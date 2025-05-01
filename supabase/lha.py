@@ -1,357 +1,216 @@
-from pymongo import MongoClient
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from datetime import datetime, timedelta
-from sklearn.metrics import mean_squared_error
-import joblib
 import os
+from supabase import create_client
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional
+import textwrap
 
-# MongoDB setup
-client = MongoClient("mongodb://localhost:27017/")
-db = client["student_db"]
-collection = db["subject_history"]
-model_collection = db["ai_models"]
+# Load environment variables from .env file
+load_dotenv()
 
-MODEL_SAVE_PATH = "ai_models/"
-os.makedirs(MODEL_SAVE_PATH, exist_ok=True)
+# Set up Supabase using environment variables
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def prepare_training_data(update_model=False):
-    """Prepare training data with time-series features"""
-    all_students = list(collection.find({}))
+class LearningAnalyzerAgent:
+    def __init__(self):
+        self.today = datetime.now().date()
     
-    X = []
-    y = []
-    student_ids = []
-    timestamps = []
+    def get_all_student_ids(self) -> List[str]:
+        """Fetch all unique student IDs from the database"""
+        try:
+            # Distinct student IDs from learning history
+            response = supabase.table("learning_history").select("student_id", count="exact").execute()
+            return list(set([item["student_id"] for item in response.data]))
+        except Exception as e:
+            print(f"Error fetching student IDs: {str(e)}")
+            return []
     
-    for student in all_students:
-        for subject in student["subjects"]:
-            if "history" in subject and len(subject["history"]) > 1:
-                # Create time-series features from historical data
-                for i in range(1, len(subject["history"])):
-                    prev = subject["history"][i-1]
-                    current = subject["history"][i]
-                    
-                    features = [
-                        current["lessons_done"],
-                        current["time_spent"],
-                        current["attendance"],
-                        prev["quiz_score"],  # Last week's score
-                        (datetime.strptime(current["date"], "%Y-%m-%d") - 
-                         datetime.strptime(prev["date"], "%Y-%m-%d")).days,
-                        np.mean([h["quiz_score"] for h in subject["history"][:i]]),  # Moving average
-                        subject["target_score"] - prev["quiz_score"],  # Gap to target
-                        i  # Week number
-                    ]
-                    
-                    target = current["quiz_score"]
-                    
-                    X.append(features)
-                    y.append(target)
-                    student_ids.append(student["student_id"])
-                    timestamps.append(current["date"])
+    def get_learning_history(self, student_id: str, days_back: Optional[int] = None) -> List[Dict]:
+        """Fetch learning history for a specific student with optional time filter"""
+        try:
+            query = supabase.table("learning_history").select("*").eq("student_id", student_id)
+            
+            if days_back:
+                start_date = (datetime.now() - timedelta(days=days_back)).isoformat()
+                query = query.gte("created_at", start_date)
+            
+            response = query.order("created_at", desc=True).execute()
+            return response.data
+        except Exception as e:
+            print(f"Error fetching learning history for student {student_id}: {str(e)}")
+            return []
     
-    if not X:
-        return None, None, None, None
-    
-    X = np.array(X)
-    y = np.array(y)
-    
-    if update_model or not os.path.exists(f"{MODEL_SAVE_PATH}scaler.pkl"):
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-        joblib.dump(scaler, f"{MODEL_SAVE_PATH}scaler.pkl")
-    else:
-        scaler = joblib.load(f"{MODEL_SAVE_PATH}scaler.pkl")
-        X_scaled = scaler.transform(X)
-    
-    return X_scaled, y, student_ids, timestamps
-
-def train_or_load_model(force_retrain=False):
-    """Train or load the prediction model with versioning"""
-    model_version = "1.0"
-    model_file = f"{MODEL_SAVE_PATH}model_v{model_version}.pkl"
-    
-    if not force_retrain and os.path.exists(model_file):
-        model = joblib.load(model_file)
-        scaler = joblib.load(f"{MODEL_SAVE_PATH}scaler.pkl")
-        return model, scaler, model_version
-    
-    X, y, _, _ = prepare_training_data(update_model=True)
-    
-    if X is None:
-        raise ValueError("Insufficient data to train model")
-    
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
-    
-    model = RandomForestRegressor(
-        n_estimators=200,
-        max_depth=10,
-        min_samples_split=5,
-        random_state=42,
-        n_jobs=-1
-    )
-    
-    model.fit(X_train, y_train)
-    
-    # Evaluate
-    train_pred = model.predict(X_train)
-    test_pred = model.predict(X_test)
-    train_rmse = np.sqrt(mean_squared_error(y_train, train_pred))
-    test_rmse = np.sqrt(mean_squared_error(y_test, test_pred))
-    
-    print(f"Model trained - Version {model_version}")
-    print(f"Train RMSE: {train_rmse:.2f}, Test RMSE: {test_rmse:.2f}")
-    
-    # Save model
-    joblib.dump(model, model_file)
-    
-    # Store model metadata in MongoDB
-    model_collection.update_one(
-        {"version": model_version},
-        {"$set": {
-            "version": model_version,
-            "train_rmse": train_rmse,
-            "test_rmse": test_rmse,
-            "train_size": len(X_train),
-            "test_size": len(X_test),
-            "last_updated": datetime.now().strftime("%Y-%m-%d"),
-            "features": [
-                "lessons_done", "time_spent", "attendance", 
-                "last_week_score", "days_since_last", 
-                "moving_avg_score", "target_gap", "week_number"
-            ]
-        }},
-        upsert=True
-    )
-    
-    return model, joblib.load(f"{MODEL_SAVE_PATH}scaler.pkl"), model_version
-
-def predict_with_confidence(model, scaler, student_data):
-    """Predict performance with confidence intervals using tree variance"""
-    predictions = {}
-    
-    for subject in student_data["subjects"]:
-        # Get historical data if available
-        history = subject.get("history", [])
-        last_record = history[-1] if history else subject
+    def analyze_progress_trends(self, history: List[Dict]) -> Dict:
+        """Analyze learning trends over time"""
+        if not history:
+            return {}
+            
+        weekly_progress = {}
+        monthly_progress = {}
         
-        # Prepare features
-        features = [
-            last_record["lessons_done"],
-            last_record["time_spent"],
-            last_record["attendance"],
-            last_record["quiz_score"],
-            7,  # Assuming 1 week since last record
-            np.mean([h["quiz_score"] for h in history]) if history else last_record["quiz_score"],
-            subject["target_score"] - last_record["quiz_score"],
-            len(history) + 1
-        ]
+        for item in history:
+            if not item.get("created_at"):
+                continue
+                
+            completed_date = datetime.fromisoformat(item["created_at"]).date()
+            week_key = f"{completed_date.year}-W{completed_date.isocalendar()[1]}"
+            month_key = f"{completed_date.year}-{completed_date.month:02d}"
+            
+            weekly_progress[week_key] = weekly_progress.get(week_key, 0) + 1
+            monthly_progress[month_key] = monthly_progress.get(month_key, 0) + 1
         
-        scaled_features = scaler.transform([features])
+        return {"weekly": weekly_progress, "monthly": monthly_progress}
+    
+    def calculate_engagement_score(self, history: List[Dict]) -> float:
+        """Calculate a score (0-100) representing student engagement"""
+        if not history:
+            return 0
+            
+        # Recent activity (last 7 days)
+        recent_history = [h for h in history 
+                        if h.get("created_at") and 
+                        (self.today - datetime.fromisoformat(h["created_at"]).date()).days <= 7]
         
-        # Get predictions from all trees
-        individual_predictions = [tree.predict(scaled_features)[0] 
-                                for tree in model.estimators_]
+        # Consistency (days with activity in last 30 days)
+        last_30_days = set()
+        for h in history:
+            if h.get("created_at"):
+                date = datetime.fromisoformat(h["created_at"]).date()
+                if (self.today - date).days <= 30:
+                    last_30_days.add(date)
         
-        mean_pred = np.mean(individual_predictions)
-        std_pred = np.std(individual_predictions)
+        consistency = len(last_30_days) / 30 * 100 if last_30_days else 0
+        completed = sum(1 for h in history if h.get("status") == "completed")
+        completion_rate = (completed / len(history)) * 100 if history else 0
         
-        predictions[subject["name"]] = {
-            "predicted_score": max(0, min(100, mean_pred)),
-            "confidence_interval": (
-                max(0, mean_pred - 1.96 * std_pred),
-                min(100, mean_pred + 1.96 * std_pred)
-            ),
-            "improvement_prob": np.mean(
-                [1 if pred > last_record["quiz_score"] else 0 
-                 for pred in individual_predictions]
-            )
+        return min(100, consistency * 0.4 + len(recent_history) * 0.3 + completion_rate * 0.3)
+    
+    def generate_personalized_feedback(self, student_id: str, full_report: bool = False) -> Dict:
+        """Generate comprehensive feedback for the student"""
+        all_history = self.get_learning_history(student_id)
+        recent_history = self.get_learning_history(student_id, days_back=30)
+        
+        completed_lessons = sum(1 for item in all_history if item.get("status") == "completed")
+        total_lessons = len(all_history)
+        completion_rate = (completed_lessons / total_lessons * 100) if total_lessons else 0
+        
+        engagement_score = self.calculate_engagement_score(all_history)
+        trends = self.analyze_progress_trends(all_history)
+        
+        last_activity = max(
+            (item.get("created_at") for item in all_history if item.get("created_at")),
+            default=None
+        )
+        
+        feedback = self._generate_feedback_text(
+            student_id=student_id,
+            completed_lessons=completed_lessons,
+            total_lessons=total_lessons,
+            completion_rate=completion_rate,
+            engagement_score=engagement_score,
+            last_activity=last_activity,
+            trends=trends,
+            recent_history=recent_history,
+            full_report=full_report
+        )
+        
+        return {
+            "student_id": student_id,
+            "completion_rate": round(completion_rate, 1),
+            "engagement_score": round(engagement_score, 1),
+            "completed_lessons": completed_lessons,
+            "total_lessons": total_lessons,
+            "last_activity": last_activity,
+            "trends": trends,
+            "feedback": feedback
         }
     
-    return predictions
-
-def generate_basic_feedback(data):
-    """Basic feedback generator without AI predictions"""
-    print(f"\nBasic Feedback Report for {data['student_name']} (ID: {data['student_id']})\n")
-
-    for subject in data["subjects"]:
-        name = subject["name"]
-        progress = subject["lessons_done"] / subject["total_lessons"] * 100
-        score_diff = subject["target_score"] - subject["quiz_score"]
-        score_trend = subject["quiz_score"] - subject["last_week_score"]
-
-        print(f"Subject: {name}")
-        print(f" - Lessons Completed: {subject['lessons_done']}/{subject['total_lessons']} ({progress:.1f}%)")
-        print(f" - Time Spent: {subject['time_spent']} minutes")
-        print(f" - Attendance: {subject['attendance']}%")
-        print(f" - Quiz Score: {subject['quiz_score']} (Last week: {subject['last_week_score']}, Change: {score_trend:+})")
-
-        if progress < 30:
-            print("   ⚠️ Try to complete more lessons to keep up.")
-        if subject["attendance"] < 85:
-            print("   ⚠️ Attendance is low. Try to attend classes more consistently.")
-        if score_diff > 5:
-            print(f"   📈 Aim to improve your score by {score_diff} points to meet your target.")
-        elif score_diff <= 5 and score_diff > 0:
-            print("   ✅ You're close to your target score—keep it up!")
-        else:
-            print("   🎉 You've reached or exceeded your target score!")
-
-        print()
-
-def generate_dynamic_feedback(data, predictions):
-    """Generate AI-powered feedback with predictions and personalized recommendations"""
-    print(f"\nAI-Powered Feedback Report for {data['student_name']} (ID: {data['student_id']})\n")
-    print("📊 Performance Overview:")
-    
-    overall_trend = 0
-    subjects_below_target = 0
-    total_subjects = len(data["subjects"])
-    
-    for subject in data["subjects"]:
-        name = subject["name"]
-        pred = predictions[name]
-        current_score = subject["quiz_score"]
-        target = subject["target_score"]
-        progress = subject["lessons_done"] / subject["total_lessons"] * 100
+    def _generate_feedback_text(self, student_id: str, completed_lessons: int, total_lessons: int,
+                              completion_rate: float, engagement_score: float, last_activity: Optional[str],
+                              trends: Dict, recent_history: List[Dict], full_report: bool) -> str:
+        """Generate human-readable feedback text"""
+        if not last_activity:
+            return textwrap.dedent(f"""
+            Hello Student {student_id}! It looks like you haven't started your learning journey yet.
+            We're excited to have you here! Would you like to begin with our introductory lessons?
+            """)
         
-        if current_score < target:
-            subjects_below_target += 1
-        
-        trend = pred["predicted_score"] - current_score
-        overall_trend += trend
-        
-        print(f"\n📚 Subject: {name}")
-        print(f"   Current Score: {current_score}")
-        print(f"   Predicted Next Score: {pred['predicted_score']:.1f}")
-        print(f"   Confidence Range: {pred['confidence_interval'][0]:.1f}-{pred['confidence_interval'][1]:.1f}")
-        print(f"   Target Score: {target}")
-        print(f"   Improvement Probability: {pred['improvement_prob']*100:.1f}%")
-        print(f"   Progress: {progress:.1f}% complete")
-        
-        # Generate dynamic recommendations
-        recommendations = []
-        
-        # Progress-based recommendations
-        if progress < 50:
-            recommendations.append(f"Increase lesson completion (currently {progress:.1f}%)")
-        
-        # Score-based recommendations
-        if pred["improvement_prob"] < 0.4:
-            recommendations.append("Focus on weak areas identified in last quiz")
-            if subject["time_spent"] < 120:
-                recommendations.append("Increase study time by at least 30 minutes daily")
-        
-        # Attendance-based
-        if subject["attendance"] < 85:
-            recommendations.append("Improve attendance (currently {}%)".format(subject["attendance"]))
-        
-        # Time management
-        if subject["time_spent"] > 300 and pred["improvement_prob"] < 0.6:
-            recommendations.append("Consider studying more effectively rather than longer")
-        
-        # Target gap
-        if (target - current_score) > 15:
-            recommendations.append("Break target into smaller weekly goals")
-        
-        # Print recommendations if any
-        if recommendations:
-            print("   💡 Recommendations:")
-            for i, rec in enumerate(recommendations, 1):
-                print(f"      {i}. {rec}")
-    
-    # Overall summary
-    print("\n🌟 Overall Summary:")
-    avg_trend = overall_trend / total_subjects
-    if avg_trend > 5:
-        print(f"   ➕ Strong positive trend predicted (+{avg_trend:.1f} points average improvement)")
-    elif avg_trend < -2:
-        print(f"   ⚠️ Caution: Negative trend predicted ({avg_trend:.1f} points average decline)")
-    else:
-        print("   ➡️ Stable performance predicted overall")
-    
-    if subjects_below_target > 0:
-        print(f"   🎯 Focus needed: {subjects_below_target}/{total_subjects} subjects below target")
-    else:
-        print("   ✅ All subjects at or above target score!")
-    
-    # Time management analysis
-    total_study_time = sum(s["time_spent"] for s in data["subjects"])
-    avg_study_per_subject = total_study_time / total_subjects
-    
-    print(f"\n⏳ Time Management Analysis:")
-    print(f"   Total study time: {total_study_time} minutes ({total_study_time/60:.1f} hours)")
-    print(f"   Average per subject: {avg_study_per_subject:.1f} minutes")
-    
-    if avg_study_per_subject < 120:
-        print("   ⚠️ Consider increasing study time per subject")
-    elif avg_study_per_subject > 240:
-        print("   ℹ️ You're studying extensively - ensure you're taking breaks")
-
-def update_student_history(student_data):
-    """Update student history with current data for time-series analysis"""
-    update_date = datetime.now().strftime("%Y-%m-%d")
-    
-    for subject in student_data["subjects"]:
-        if "history" not in subject:
-            subject["history"] = []
-        
-        # Add current state to history
-        subject["history"].append({
-            "date": update_date,
-            "lessons_done": subject["lessons_done"],
-            "time_spent": subject["time_spent"],
-            "attendance": subject["attendance"],
-            "quiz_score": subject["quiz_score"],
-            "last_week_score": subject["last_week_score"]
-        })
-    
-    # Update in database
-    collection.update_one(
-        {"student_id": student_data["student_id"]},
-        {"$set": {"subjects": student_data["subjects"]}}
-    )
-
-# Main execution with dynamic data handling
-if __name__ == "__main__":
-    student_id = int(input("Enter student ID: "))
-    student_data = collection.find_one({"student_id": student_id})
-    
-    if student_data:
         try:
-            # Update history before prediction
-            update_student_history(student_data)
-            
-            # Load or train model
-            model, scaler, version = train_or_load_model()
-            
-            # Make predictions
-            predictions = predict_with_confidence(model, scaler, student_data)
-            
-            # Generate dynamic feedback
-            generate_dynamic_feedback(student_data, predictions)
-            
-            # Store predictions in database
-            collection.update_one(
-                {"student_id": student_id},
-                {"$set": {
-                    "last_prediction": {
-                        "date": datetime.now().strftime("%Y-%m-%d"),
-                        "version": version,
-                        "predictions": predictions
-                    }
-                }}
+            days_since_last = (self.today - datetime.fromisoformat(last_activity).date()).days
+        except:
+            days_since_last = 0
+        
+        progress_report = []
+        
+        if completed_lessons == total_lessons:
+            progress_report.append(f"🌟 Congratulations! You've completed all {total_lessons} available lessons!")
+        else:
+            progress_report.append(
+                f"You've completed {completed_lessons} out of {total_lessons} lessons ({completion_rate:.1f}%). "
+                f"Keep up the good work!"
             )
+        
+        if engagement_score > 80:
+            progress_report.append("Your learning engagement is excellent! You're consistently making progress.")
+        elif engagement_score > 50:
+            progress_report.append("You're making steady progress. Try to maintain this momentum!")
+        else:
+            progress_report.append("Consider spending more regular time on learning to improve your progress.")
+        
+        if days_since_last == 0:
+            progress_report.append("Great job learning today! Daily practice leads to mastery.")
+        elif days_since_last <= 3:
+            progress_report.append(f"You were last active {days_since_last} days ago. Nice recent activity!")
+        elif days_since_last <= 7:
+            progress_report.append(f"It's been {days_since_last} days since your last activity. Ready for another session?")
+        else:
+            progress_report.append(f"It's been {days_since_last} days since your last activity. Let's get back on track!")
+        
+        if full_report:
+            progress_report.append("\n📊 Detailed Progress Analysis:")
+            progress_report.append(f"- Completed {len(recent_history)} lessons in the last 30 days")
             
-        except Exception as e:
-            print(f"\nAI system error: {str(e)}")
-            print("Falling back to basic feedback with current data...\n")
-            generate_basic_feedback(student_data)
-    else:
-        print("Student not found in database.")
+            if trends.get("weekly"):
+                last_week = max(trends["weekly"].keys())
+                last_week_count = trends["weekly"][last_week]
+                progress_report.append(f"- Completed {last_week_count} lessons last week ({last_week})")
+            
+            progress_report.append("\n💡 Suggested Next Steps:")
+            if completion_rate < 50:
+                progress_report.append("- Focus on completing more lessons to build foundational knowledge")
+            elif completion_rate < 80:
+                progress_report.append("- Review completed lessons and practice weaker areas")
+            else:
+                progress_report.append("- Challenge yourself with advanced materials or practical applications")
+        
+        return "\n".join(progress_report)
+
+def main():
+    analyzer = LearningAnalyzerAgent()
+    
+    # Get all student IDs from database
+    student_ids = analyzer.get_all_student_ids()
+    
+    if not student_ids:
+        print("No students found in the database.")
+        return
+    
+    print(f"Found {len(student_ids)} students. Generating reports...\n")
+    
+    for student_id in student_ids:
+        print(f"\nGenerating learning report for student {student_id}...")
+        report = analyzer.generate_personalized_feedback(student_id, full_report=True)
+        
+        print("\n=== LEARNING PROGRESS REPORT ===")
+        print(f"Student ID: {report['student_id']}")
+        print(f"Completion Rate: {report['completion_rate']}%")
+        print(f"Engagement Score: {report['engagement_score']}/100")
+        print(f"Last Activity: {report['last_activity'] or 'Never'}")
+        print("\nFEEDBACK:")
+        print(report['feedback'])
+        print("\n" + "="*40 + "\n")
+
+if __name__ == "__main__":
+    main()
