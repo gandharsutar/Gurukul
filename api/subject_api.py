@@ -192,4 +192,4 @@ def get_subjects():
     return JSONResponse(content=subjects_data)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="192.168.0.80", port=8000)
+    uvicorn.run(app, host="192.168.0.64", port=8000)
