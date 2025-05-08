@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import List
 import uvicorn
 import requests
-import datetime
+from datetime import datetime,timezone
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -31,7 +31,7 @@ class ChatMessage(BaseModel):
 # Route 1: Receive query from frontend
 @app.post("/chatpost")
 async def receive_query(chat: ChatMessage):
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.now(timezone.utc).isoformat()
     query_record = {
         "message": chat.message,
         "timestamp": timestamp,
@@ -86,7 +86,7 @@ async def send_response():
 
     llm_reply = call_groq_llama3(latest_query)
 
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.now(timezone.utc).isoformat()
     response_record = {
         "message": llm_reply,
         "timestamp": timestamp,

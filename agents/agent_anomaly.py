@@ -1,238 +1,364 @@
+import logging
 from pymongo import MongoClient
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Union, Optional
+import os
+from PIL import Image
+import cv2
+import librosa
+import speech_recognition as sr
 
-# MongoDB Connection
-def connect_to_mongodb(connection_string, db_name, collection_name):
-    """Connect to MongoDB and return the specified collection"""
-    client = MongoClient(connection_string)
-    db = client[db_name]
-    return db[collection_name]
+# Configure logging
+def setup_logging():
+    """Configure logging for the application"""
+    log_dir = "logs"
+    if not os.path.exists(log_dir):
+        os.mkdirs(log_dir)
+    
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = os.path.join(log_dir, f"multimodal_anomaly_detection_{current_time}.log")
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
+    
+    return logging.getLogger(__name__)
 
-# Fetch student data from MongoDB
-def fetch_student_data(collection, student_id=None):
-    """
-    Fetch student data from MongoDB
-    If student_id is provided, fetch only that student's data
-    Otherwise, fetch all students
-    """
-    if student_id:
-        return collection.find_one({"student_id": student_id})
-    else:
-        return list(collection.find({}))
+logger = setup_logging()
 
-class StudentAnomalyDetector:
-    def __init__(self, student_data: Dict):
-        self.data = student_data
+class MultiModalDataConnector:
+    def __init__(self, connection_string: str, db_name: str):
+        """Initialize connection to MongoDB with multimodal data"""
+        try:
+            logger.info(f"Initializing MongoDB connection to {db_name}")
+            self.client = MongoClient(connection_string)
+            self.db = self.client[db_name]
+            logger.info("MongoDB connection established successfully")
+        except Exception as e:
+            logger.error(f"Failed to connect to MongoDB: {str(e)}")
+            raise
+    
+    def get_text_data(self, collection_name: str, query: Dict = {}) -> List[Dict]:
+        """Retrieve processed text data from MongoDB"""
+        try:
+            logger.debug(f"Retrieving text data from collection {collection_name}")
+            data = list(self.db[collection_name].find(query))
+            logger.info(f"Retrieved {len(data)} text documents from {collection_name}")
+            return data
+        except Exception as e:
+            logger.error(f"Error retrieving text data: {str(e)}")
+            return []
+
+    def get_audio_metadata(self, collection_name: str) -> List[Dict]:
+        """Retrieve audio file metadata"""
+        try:
+            logger.debug(f"Retrieving audio metadata from collection {collection_name}")
+            data = list(self.db[collection_name].find({}, {"audio_path": 1, "duration": 1, "transcript": 1}))
+            logger.info(f"Retrieved {len(data)} audio metadata records from {collection_name}")
+            return data
+        except Exception as e:
+            logger.error(f"Error retrieving audio metadata: {str(e)}")
+            return []
+
+    def get_video_metadata(self, collection_name: str) -> List[Dict]:
+        """Retrieve video file metadata"""
+        try:
+            logger.debug(f"Retrieving video metadata from collection {collection_name}")
+            data = list(self.db[collection_name].find({}, {"video_path": 1, "duration": 1, "keyframes": 1}))
+            logger.info(f"Retrieved {len(data)} video metadata records from {collection_name}")
+            return data
+        except Exception as e:
+            logger.error(f"Error retrieving video metadata: {str(e)}")
+            return []
+
+    def get_image_metadata(self, collection_name: str) -> List[Dict]:
+        """Retrieve image file metadata"""
+        try:
+            logger.debug(f"Retrieving image metadata from collection {collection_name}")
+            data = list(self.db[collection_name].find({}, {"image_path": 1, "features": 1, "annotations": 1}))
+            logger.info(f"Retrieved {len(data)} image metadata records from {collection_name}")
+            return data
+        except Exception as e:
+            logger.error(f"Error retrieving image metadata: {str(e)}")
+            return []
+
+    def process_audio_file(self, file_path: str) -> Dict:
+        """Process audio file to extract features"""
+        try:
+            logger.info(f"Processing audio file: {file_path}")
+            
+            # Load audio file
+            y, sr = librosa.load(file_path)
+            
+            # Extract features
+            duration = librosa.get_duration(y=y, sr=sr)
+            mfcc = librosa.feature.mfcc(y=y, sr=sr)
+            chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+            
+            # Speech recognition
+            r = sr.Recognizer()
+            with sr.AudioFile(file_path) as source:
+                audio = r.record(source)
+                try:
+                    transcript = r.recognize_google(audio)
+                except sr.UnknownValueError:
+                    transcript = "Could not understand audio"
+                except Exception as e:
+                    logger.warning(f"Speech recognition error: {str(e)}")
+                    transcript = f"Recognition error: {str(e)}"
+            
+            result = {
+                "duration": duration,
+                "mfcc_mean": np.mean(mfcc),
+                "chroma_mean": np.mean(chroma),
+                "transcript": transcript,
+                "status": "processed"
+            }
+            
+            logger.info(f"Successfully processed audio file: {file_path}")
+            return result
+        except Exception as e:
+            error_msg = f"Error processing audio file {file_path}: {str(e)}"
+            logger.error(error_msg)
+            return {"error": error_msg, "status": "failed"}
+
+    def process_video_file(self, file_path: str) -> Dict:
+        """Process video file to extract key frames and features"""
+        try:
+            logger.info(f"Processing video file: {file_path}")
+            cap = cv2.VideoCapture(file_path)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            duration = frame_count / fps
+            
+            # Extract key frames (every 5 seconds)
+            keyframes = []
+            for i in range(0, frame_count, int(5 * fps)):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+                ret, frame = cap.read()
+                if ret:
+                    # Convert to RGB and get dominant color
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    avg_color = np.mean(frame_rgb, axis=(0, 1))
+                    keyframes.append({
+                        "frame_number": i,
+                        "timestamp": i/fps,
+                        "dominant_color": avg_color.tolist()
+                    })
+            
+            cap.release()
+            
+            result = {
+                "duration": duration,
+                "fps": fps,
+                "frame_count": frame_count,
+                "keyframes": keyframes,
+                "status": "processed"
+            }
+            
+            logger.info(f"Successfully processed video file: {file_path}")
+            return result
+        except Exception as e:
+            error_msg = f"Error processing video file {file_path}: {str(e)}"
+            logger.error(error_msg)
+            return {"error": error_msg, "status": "failed"}
+
+    def process_image_file(self, file_path: str) -> Dict:
+        """Process image file to extract features"""
+        try:
+            logger.info(f"Processing image file: {file_path}")
+            img = Image.open(file_path)
+            width, height = img.size
+            dominant_color = np.array(img).mean(axis=(0, 1)).tolist()
+            
+            result = {
+                "width": width,
+                "height": height,
+                "dominant_color": dominant_color,
+                "format": img.format,
+                "mode": img.mode,
+                "status": "processed"
+            }
+            
+            logger.info(f"Successfully processed image file: {file_path}")
+            return result
+        except Exception as e:
+            error_msg = f"Error processing image file {file_path}: {str(e)}"
+            logger.error(error_msg)
+            return {"error": error_msg, "status": "failed"}
+
+class MultiModalAnomalyDetector:
+    def __init__(self, data_connector: MultiModalDataConnector):
+        self.connector = data_connector
         self.anomalies = []
-        self.revision_subjects = {}  # Track subjects needing revision
+        logger.info("MultiModalAnomalyDetector initialized")
 
-    def detect_all_anomalies(self):
-        """Run all anomaly checks and return results"""
-        self._check_quiz_score_drops()
-        self._check_attendance_low()
-        self._check_time_management()
-        self._check_progress_deviation()
-        self._check_session_time_gaps()
-        return self.get_anomaly_report()
-
-    def _check_quiz_score_drops(self) -> None:
-        """Detect >20% drop between last_week_scores and current quiz_scores"""
-        for subj, last, current in zip(
-            self.data['subjects'],
-            self.data['last_week_scores'],
-            self.data['quiz_scores']
-        ):
-            if last == 0:
-                continue  # Avoid division by zero
-            drop = (last - current) / last
-            if drop > 0.2:
-                self.anomalies.append(
-                    f"📉 Score Drop: {subj} score dropped by {drop:.0%} "
-                    f"(from {last} to {current})"
-                )
-                # Add to revision list with reason and severity
-                self.revision_subjects[subj] = {
-                    "reason": "significant score drop",
-                    "severity": "high" if drop > 0.3 else "medium",
-                    "current_score": current
-                }
-
-    def _check_attendance_low(self) -> None:
-        """Flag subjects with attendance <85%"""
-        for subj, att in zip(self.data['subjects'], self.data['attendance']):
-            if att < 85:
-                self.anomalies.append(
-                    f"⏰ Low Attendance: {subj} has only {att}% attendance"
-                )
-                # Low attendance may indicate need for revision
-                if subj not in self.revision_subjects:
-                    self.revision_subjects[subj] = {
-                        "reason": "poor attendance",
-                        "severity": "medium" if att < 75 else "low",
-                        "attendance": att
-                    }
-
-    def _check_time_management(self) -> None:
-        """Identify subjects with high time spent but low lessons done"""
-        avg_time_per_lesson = [
-            t/l if l > 0 else 0 
-            for t, l in zip(
-                self.data['time_spent'], 
-                self.data['lessons_done']
-            )
-        ]
+    def detect_text_anomalies(self, collection_name: str) -> List[str]:
+        """Detect anomalies in processed text data"""
+        logger.info(f"Starting text anomaly detection on collection: {collection_name}")
+        text_data = self.connector.get_text_data(collection_name)
+        anomalies = []
         
-        threshold = np.percentile(avg_time_per_lesson, 75)  # Top 25% slowest
-        for subj, avg, time, lessons in zip(
-            self.data['subjects'],
-            avg_time_per_lesson,
-            self.data['time_spent'],
-            self.data['lessons_done']
-        ):
-            if avg > threshold:
-                self.anomalies.append(
-                    f"🐌 Time Sink: {subj} takes {avg:.1f} mins/lesson "
-                    f"(total {time} mins for {lessons} lessons)"
-                )
-                # Subject is difficult for student, may need revision
-                if subj not in self.revision_subjects:
-                    self.revision_subjects[subj] = {
-                        "reason": "efficiency issues",
-                        "severity": "medium",
-                        "time_per_lesson": avg
-                    }
-
-    def _check_progress_deviation(self) -> None:
-        """Compare current scores to target scores"""
-        for subj, current, target in zip(
-            self.data['subjects'],
-            self.data['quiz_scores'],
-            self.data['target_scores']
-        ):
-            if current < target - 10:  # 10 points below target
-                self.anomalies.append(
-                    f"🎯 Off Target: {subj} is {target-current} points "
-                    f"below target ({current} vs {target})"
-                )
-                # High priority for revision if far from target
-                severity = "high" if (target - current) > 20 else "medium"
-                self.revision_subjects[subj] = {
-                    "reason": "below target score",
-                    "severity": severity,
-                    "gap": target - current,
-                    "current_score": current
-                }
-    
-    def _check_session_time_gaps(self) -> None:
-        """Detect unusually large gaps between study sessions"""
-        if 'last_session_time' not in self.data or 'current_session_time' not in self.data:
-            return
+        for doc in text_data:
+            doc_id = str(doc.get('_id', 'unknown'))
             
-        last_session = datetime.strptime(self.data['last_session_time'], '%Y-%m-%d %H:%M:%S')
-        current_session = datetime.strptime(self.data['current_session_time'], '%Y-%m-%d %H:%M:%S')
-        
-        gap = current_session - last_session
-        if gap > timedelta(days=3):  # 3 days threshold for large gap
-            self.anomalies.append(
-                f"⏳ Large Time Gap: {gap.days} days between sessions "
-                f"(last: {last_session.date()}, current: {current_session.date()})"
-            )
-            # Trigger mock alert message
-            self.anomalies.append("🚨 ALERT: Student may need re-engagement!")            
-
-    def get_revision_recommendations(self) -> str:
-        """Generate recommendations for subjects needing revision"""
-        if not self.revision_subjects:
-            return "✅ Great job! You're on track with all subjects."
-        
-        # Sort subjects by severity
-        high_priority = []
-        medium_priority = []
-        low_priority = []
-        
-        for subject, details in self.revision_subjects.items():
-            if details["severity"] == "high":
-                high_priority.append((subject, details))
-            elif details["severity"] == "medium":
-                medium_priority.append((subject, details))
-            else:
-                low_priority.append((subject, details))
-        
-        recommendations = [
-            f"REVISION RECOMMENDATIONS FOR {self.data['student_name']}",
-            "="*50,
-            "\n🔴 HIGH PRIORITY SUBJECTS:"
-        ]
-        
-        if high_priority:
-            for subj, details in high_priority:
-                reason = details["reason"]
-                if "current_score" in details:
-                    score_info = f" (Current score: {details['current_score']}%)"
-                else:
-                    score_info = ""
-                recommendations.append(f"  • {subj}: {reason.capitalize()}{score_info}")
-        else:
-            recommendations.append("  No high priority subjects")
-        
-        recommendations.append("\n🟠 MEDIUM PRIORITY SUBJECTS:")
-        if medium_priority:
-            for subj, details in medium_priority:
-                recommendations.append(f"  • {subj}: {details['reason'].capitalize()}")
-        else:
-            recommendations.append("  No medium priority subjects")
-            
-        recommendations.append("\n🟢 LOW PRIORITY SUBJECTS:")
-        if low_priority:
-            for subj, details in low_priority:
-                recommendations.append(f"  • {subj}: {details['reason'].capitalize()}")
-        else:
-            recommendations.append("  No low priority subjects")
-        
-        recommendations.append("\nACTION STEPS:")
-        if high_priority:
-            for subj, _ in high_priority[:2]:  # Top 2 high priority subjects
-                recommendations.append(f"  1. Schedule immediate revision sessions for {subj}")
+            # Check for sentiment anomalies
+            if "sentiment" in doc:
+                score = doc["sentiment"].get("score", 0)
+                if score < -0.7:
+                    msg = f"⚠️ Negative sentiment detected in document {doc_id}: {score}"
+                    anomalies.append(msg)
+                    logger.warning(msg)
                 
-        if len(self.revision_subjects) > 0:
-            recommendations.append(f"  2. Review your study schedule to allocate more time to priority subjects")
-            recommendations.append(f"  3. Consider seeking help from your teacher for difficult topics")
+            # Check for toxicity
+            if "toxicity" in doc:
+                score = doc["toxicity"].get("score", 0)
+                if score > 0.8:
+                    msg = f"🚨 High toxicity detected in document {doc_id}: {score}"
+                    anomalies.append(msg)
+                    logger.warning(msg)
         
-        return "\n".join(recommendations)
+        self.anomalies.extend(anomalies)
+        logger.info(f"Detected {len(anomalies)} text anomalies in {collection_name}")
+        return anomalies
 
-    def get_anomaly_report(self) -> str:
-        """Generate formatted report"""
+    def detect_audio_anomalies(self, collection_name: str) -> List[str]:
+        """Detect anomalies in audio data"""
+        logger.info(f"Starting audio anomaly detection on collection: {collection_name}")
+        audio_data = self.connector.get_audio_metadata(collection_name)
+        anomalies = []
+        
+        for doc in audio_data:
+            file_path = doc.get('audio_path', 'unknown')
+            
+            # Check for long durations
+            if "duration" in doc and doc["duration"] > 300:  # >5 minutes
+                msg = f"⏱️ Long audio duration ({doc['duration']}s) in file {file_path}"
+                anomalies.append(msg)
+                logger.warning(msg)
+            
+            # Check for empty transcripts
+            if "transcript" in doc and len(doc["transcript"].strip()) < 10:
+                msg = f"🔇 Very short transcript in file {file_path}"
+                anomalies.append(msg)
+                logger.warning(msg)
+        
+        self.anomalies.extend(anomalies)
+        logger.info(f"Detected {len(anomalies)} audio anomalies in {collection_name}")
+        return anomalies
+
+    def detect_video_anomalies(self, collection_name: str) -> List[str]:
+        """Detect anomalies in video data"""
+        logger.info(f"Starting video anomaly detection on collection: {collection_name}")
+        video_data = self.connector.get_video_metadata(collection_name)
+        anomalies = []
+        
+        for doc in video_data:
+            file_path = doc.get('video_path', 'unknown')
+            
+            # Check for very short videos
+            if "duration" in doc and doc["duration"] < 5:
+                msg = f"🎬 Very short video ({doc['duration']}s) in file {file_path}"
+                anomalies.append(msg)
+                logger.warning(msg)
+            
+            # Check for missing keyframes
+            if "keyframes" in doc and len(doc["keyframes"]) < 3:
+                msg = f"🖼️ Few keyframes ({len(doc['keyframes'])}) in file {file_path}"
+                anomalies.append(msg)
+                logger.warning(msg)
+        
+        self.anomalies.extend(anomalies)
+        logger.info(f"Detected {len(anomalies)} video anomalies in {collection_name}")
+        return anomalies
+
+    def detect_image_anomalies(self, collection_name: str) -> List[str]:
+        """Detect anomalies in image data"""
+        logger.info(f"Starting image anomaly detection on collection: {collection_name}")
+        image_data = self.connector.get_image_metadata(collection_name)
+        anomalies = []
+        
+        for doc in image_data:
+            file_path = doc.get('image_path', 'unknown')
+            
+            # Check for very large images
+            if "width" in doc and "height" in doc:
+                megapixels = (doc["width"] * doc["height"]) / 1_000_000
+                if megapixels > 10:
+                    msg = f"📷 Large image ({megapixels:.1f} MP) in file {file_path}"
+                    anomalies.append(msg)
+                    logger.warning(msg)
+            
+            # Check for potential NSFW content
+            if "annotations" in doc and "nsfw_score" in doc["annotations"]:
+                if doc["annotations"]["nsfw_score"] > 0.8:
+                    msg = f"🚫 Potentially NSFW image ({doc['annotations']['nsfw_score']}) in file {file_path}"
+                    anomalies.append(msg)
+                    logger.warning(msg)
+        
+        self.anomalies.extend(anomalies)
+        logger.info(f"Detected {len(anomalies)} image anomalies in {collection_name}")
+        return anomalies
+
+    def generate_report(self) -> str:
+        """Generate comprehensive anomaly report"""
+        logger.info("Generating anomaly detection report")
         if not self.anomalies:
-            return "✅ No anomalies detected"
+            logger.info("No anomalies detected")
+            return "✅ No anomalies detected across all modalities"
         
-        report = "\n".join([
-            f"ANOMALY REPORT for {self.data['student_name']} (ID:{self.data['student_id']})",
+        report = [
+            "MULTIMODAL ANOMALY REPORT",
             "="*50,
+            f"Total anomalies detected: {len(self.anomalies)}",
+            "\nDETAILED FINDINGS:",
             *self.anomalies,
-            f"\nTotal anomalies found: {len(self.anomalies)}"
-        ])
+            "\nRECOMMENDATIONS:",
+            "1. Review high-severity anomalies first",
+            "2. Check original files for flagged items",
+            "3. Consider reprocessing problematic files",
+            "4. Update processing pipelines if patterns emerge"
+        ]
         
-        # Add revision recommendations
-        report += "\n\n" + self.get_revision_recommendations()
-        
-        return report
+        report_str = "\n".join(report)
+        logger.info(f"Report generated with {len(self.anomalies)} anomalies")
+        return report_str
 
-
-# Example Usage with MongoDB
+# Example Usage
 if __name__ == "__main__":
-    # MongoDB connection details
-    CONNECTION_STRING = "mongodb://localhost:27017/"
-    DB_NAME = "student_db"
-    COLLECTION_NAME = "performance_data"
-    
-    # Connect to MongoDB
-    collection = connect_to_mongodb(CONNECTION_STRING, DB_NAME, COLLECTION_NAME)
-    
-    # Option 2: Run anomaly detection for all students
-    all_students = fetch_student_data(collection)
-    for student in all_students:
-        detector = StudentAnomalyDetector(student)
-        print(detector.detect_all_anomalies())
-        print("\n" + "="*60 + "\n")  # Separator between reports
+    try:
+        logger.info("Starting multimodal anomaly detection process")
+        
+        # Initialize the multimodal connector
+        connector = MultiModalDataConnector("mongodb://localhost:27017/", "multimedia_db")
+        
+        # Initialize the anomaly detector
+        detector = MultiModalAnomalyDetector(connector)
+        
+        # Run anomaly detection across different modalities
+        logger.info("Running text anomaly detection")
+        detector.detect_text_anomalies("processed_text")
+        
+        logger.info("Running audio anomaly detection")
+        detector.detect_audio_anomalies("processed_audio")
+        
+        logger.info("Running video anomaly detection")
+        detector.detect_video_anomalies("processed_video")
+        
+        logger.info("Running image anomaly detection")
+        detector.detect_image_anomalies("processed_images")
+        
+        # Generate and print the report
+        report = detector.generate_report()
+        print(report)
+        
+        logger.info("Anomaly detection process completed successfully")
+    except Exception as e:
+        logger.error(f"Error in main execution: {str(e)}", exc_info=True)
+        raise
