@@ -1,0 +1,25 @@
+2025-05-08 13:35:11,010 - __main__ - INFO - Starting student performance prediction application
+2025-05-08 13:35:11,011 - __main__ - INFO - Using MongoDB: student_db.performance_data
+2025-05-08 13:35:11,011 - __main__ - INFO - Starting student performance prediction workflow
+2025-05-08 13:35:11,011 - __main__ - INFO - Connecting to MongoDB: student_db.performance_data
+2025-05-08 13:35:11,016 - __main__ - INFO - Successfully connected to MongoDB
+2025-05-08 13:35:11,017 - __main__ - INFO - Fetching student data from MongoDB
+2025-05-08 13:35:11,029 - __main__ - ERROR - Error fetching student data: 'subject'
+2025-05-08 13:35:11,029 - __main__ - ERROR - Error in prediction workflow: 'subject'
+Traceback (most recent call last):
+  File "E:\pythonProject\Gurukul\agents\agent_trend.py", line 163, in predict_student_performance
+    df = fetch_student_data(collection)
+  File "E:\pythonProject\Gurukul\agents\agent_trend.py", line 126, in fetch_student_data
+    for i, subject in enumerate(student['subject']):
+                                ~~~~~~~^^^^^^^^^^^
+KeyError: 'subject'
+2025-05-08 13:35:11,031 - __main__ - ERROR - Application error: 'subject'
+Traceback (most recent call last):
+  File "E:\pythonProject\Gurukul\agents\agent_trend.py", line 290, in <module>
+    model = predict_student_performance(CONNECTION_STRING, DB_NAME, COLLECTION_NAME)
+  File "E:\pythonProject\Gurukul\agents\agent_trend.py", line 163, in predict_student_performance
+    df = fetch_student_data(collection)
+  File "E:\pythonProject\Gurukul\agents\agent_trend.py", line 126, in fetch_student_data
+    for i, subject in enumerate(student['subject']):
+                                ~~~~~~~^^^^^^^^^^^
+KeyError: 'subject'

@@ -1,0 +1,23 @@
+2025-05-09 11:30:51,829 - __main__ - INFO - Starting multimodal anomaly detection process
+2025-05-09 11:30:51,829 - __main__ - INFO - Initializing MongoDB connection to multimedia_db
+2025-05-09 11:30:51,835 - __main__ - INFO - MongoDB connection established successfully
+2025-05-09 11:30:51,836 - __main__ - INFO - MultiModalAnomalyDetector initialized
+2025-05-09 11:30:51,836 - __main__ - INFO - Running text anomaly detection
+2025-05-09 11:30:51,836 - __main__ - INFO - Starting text anomaly detection on collection: processed_text
+2025-05-09 11:30:51,860 - __main__ - INFO - Retrieved 0 text documents from processed_text
+2025-05-09 11:30:51,861 - __main__ - INFO - Detected 0 text anomalies in processed_text
+2025-05-09 11:30:51,862 - __main__ - INFO - Running audio anomaly detection
+2025-05-09 11:30:51,862 - __main__ - INFO - Starting audio anomaly detection on collection: processed_audio
+2025-05-09 11:30:51,864 - __main__ - INFO - Retrieved 0 audio metadata records from processed_audio
+2025-05-09 11:30:51,865 - __main__ - INFO - Detected 0 audio anomalies in processed_audio
+2025-05-09 11:30:51,865 - __main__ - INFO - Running video anomaly detection
+2025-05-09 11:30:51,865 - __main__ - INFO - Starting video anomaly detection on collection: processed_video
+2025-05-09 11:30:51,866 - __main__ - INFO - Retrieved 0 video metadata records from processed_video
+2025-05-09 11:30:51,866 - __main__ - INFO - Detected 0 video anomalies in processed_video
+2025-05-09 11:30:51,867 - __main__ - INFO - Running image anomaly detection
+2025-05-09 11:30:51,867 - __main__ - INFO - Starting image anomaly detection on collection: processed_images
+2025-05-09 11:30:51,868 - __main__ - INFO - Retrieved 0 image metadata records from processed_images
+2025-05-09 11:30:51,868 - __main__ - INFO - Detected 0 image anomalies in processed_images
+2025-05-09 11:30:51,869 - __main__ - INFO - Generating anomaly detection report
+2025-05-09 11:30:51,869 - __main__ - INFO - No anomalies detected
+2025-05-09 11:30:51,869 - __main__ - INFO - Anomaly detection process completed successfully

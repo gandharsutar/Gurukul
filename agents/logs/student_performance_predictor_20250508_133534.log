@@ -1,0 +1,25 @@
+2025-05-08 13:35:34,445 - __main__ - INFO - Starting student performance prediction application
+2025-05-08 13:35:34,445 - __main__ - INFO - Using MongoDB: student_db.performance_data
+2025-05-08 13:35:34,446 - __main__ - INFO - Starting student performance prediction workflow
+2025-05-08 13:35:34,446 - __main__ - INFO - Connecting to MongoDB: student_db.performance_data
+2025-05-08 13:35:34,450 - __main__ - INFO - Successfully connected to MongoDB
+2025-05-08 13:35:34,450 - __main__ - INFO - Fetching student data from MongoDB
+2025-05-08 13:35:34,456 - __main__ - ERROR - Error fetching student data: list index out of range
+2025-05-08 13:35:34,456 - __main__ - ERROR - Error in prediction workflow: list index out of range
+Traceback (most recent call last):
+  File "E:\pythonProject\Gurukul\agents\agent_trend.py", line 163, in predict_student_performance
+    df = fetch_student_data(collection)
+  File "E:\pythonProject\Gurukul\agents\agent_trend.py", line 128, in fetch_student_data
+    audio_features = process_audio_features(student.get('audio_features', [{}])[i])
+                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+2025-05-08 13:35:34,458 - __main__ - ERROR - Application error: list index out of range
+Traceback (most recent call last):
+  File "E:\pythonProject\Gurukul\agents\agent_trend.py", line 290, in <module>
+    model = predict_student_performance(CONNECTION_STRING, DB_NAME, COLLECTION_NAME)
+  File "E:\pythonProject\Gurukul\agents\agent_trend.py", line 163, in predict_student_performance
+    df = fetch_student_data(collection)
+  File "E:\pythonProject\Gurukul\agents\agent_trend.py", line 128, in fetch_student_data
+    audio_features = process_audio_features(student.get('audio_features', [{}])[i])
+                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range

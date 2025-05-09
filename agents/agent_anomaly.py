@@ -14,7 +14,7 @@ def setup_logging():
     """Configure logging for the application"""
     log_dir = "logs"
     if not os.path.exists(log_dir):
-        os.mkdirs(log_dir)
+        os.makedirs(log_dir)
     
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(log_dir, f"multimodal_anomaly_detection_{current_time}.log")

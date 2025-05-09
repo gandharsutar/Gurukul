@@ -1,0 +1,22 @@
+2025-05-08 12:51:28,319 - __main__ - INFO - Starting Learning Analyzer application
+2025-05-08 12:51:28,319 - __main__ - INFO - LearningAnalyzerAgent initialized
+2025-05-08 12:51:28,319 - __main__ - INFO - Checking database tables existence
+2025-05-08 12:51:30,064 - httpx - INFO - HTTP Request: GET https://aohfwpmndwzgmfcwpgbg.supabase.co/rest/v1/learning_history?select=count&limit=1 "HTTP/2 206 Partial Content"
+2025-05-08 12:51:30,260 - httpx - INFO - HTTP Request: GET https://aohfwpmndwzgmfcwpgbg.supabase.co/rest/v1/media_interactions?select=count&limit=1 "HTTP/2 404 Not Found"
+2025-05-08 12:51:30,261 - __main__ - WARNING - media_interactions table does not exist: {'code': '42P01', 'details': None, 'hint': None, 'message': 'relation "public.media_interactions" does not exist'}
+2025-05-08 12:51:30,398 - httpx - INFO - HTTP Request: GET https://aohfwpmndwzgmfcwpgbg.supabase.co/rest/v1/processed_media?select=count&limit=1 "HTTP/2 404 Not Found"
+2025-05-08 12:51:30,399 - __main__ - WARNING - processed_media table does not exist: {'code': '42P01', 'details': None, 'hint': None, 'message': 'relation "public.processed_media" does not exist'}
+2025-05-08 12:51:30,399 - __main__ - INFO - Table existence check completed: {'learning_history': True, 'media_interactions': False, 'processed_media': False}
+2025-05-08 12:51:30,399 - __main__ - WARNING - Some required tables are missing
+2025-05-08 12:51:30,400 - __main__ - INFO - Displaying database setup instructions
+2025-05-08 12:51:30,401 - __main__ - INFO - Fetching all student IDs from learning_history
+2025-05-08 12:51:30,635 - httpx - INFO - HTTP Request: GET https://aohfwpmndwzgmfcwpgbg.supabase.co/rest/v1/learning_history?select=student_id "HTTP/2 200 OK"
+2025-05-08 12:51:30,636 - __main__ - INFO - Found 8 unique student IDs
+2025-05-08 12:51:30,636 - __main__ - INFO - Displaying student ID selection menu
+2025-05-08 12:51:32,805 - __main__ - INFO - User selected student ID: 1
+2025-05-08 12:51:32,806 - __main__ - INFO - Generating comprehensive feedback for student 1
+2025-05-08 12:51:32,806 - __main__ - INFO - Fetching learning history for student 1
+2025-05-08 12:51:32,874 - httpx - INFO - HTTP Request: GET https://aohfwpmndwzgmfcwpgbg.supabase.co/rest/v1/learning_history?select=%2A&student_id=eq.1 "HTTP/2 200 OK"
+2025-05-08 12:51:32,874 - __main__ - WARNING - Missing tables affecting feedback: ['media_interactions', 'processed_media']
+2025-05-08 12:51:32,875 - __main__ - INFO - Feedback generation completed for student 1
+2025-05-08 12:51:32,875 - __main__ - INFO - Application completed successfully
