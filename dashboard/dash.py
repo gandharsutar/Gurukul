@@ -7,7 +7,32 @@ from audio_recorder_streamlit import audio_recorder
 import random
 import os
 
-# Initialize session state
+# App-wide styling
+st.set_page_config(page_title="Agent Interaction Dashboard", layout="wide")
+
+# Inject custom CSS for a clean aesthetic
+st.markdown("""
+    <style>
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        padding-left: 3rem;
+        padding-right: 3rem;
+    }
+    .stExpander > summary {
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+    .metric-label {
+        font-size: 0.9rem;
+    }
+    .metric-value {
+        font-size: 1.5rem;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Session state initialization
 if 'interactions' not in st.session_state:
     st.session_state.interactions = []
 if 'agent_mood' not in st.session_state:
@@ -19,7 +44,7 @@ if 'active_agents' not in st.session_state:
         "WellnessBot": True
     }
 
-# Agent configurations with backend URLs
+# Agent configuration
 AGENT_CONFIG = {
     "FinancialCrew": {
         "icon": "💰",
@@ -27,8 +52,6 @@ AGENT_CONFIG = {
         "secondary_color": "#27ae60",
         "thought_icon": "📈",
         "description": "Financial advisor specializing in investments and budgeting",
-        "backend_url": "https://financial-crew-backend.com/api",
-        "signal": "lets_go_finance"
     },
     "EduMentor": {
         "icon": "📚",
@@ -36,8 +59,6 @@ AGENT_CONFIG = {
         "secondary_color": "#2980b9",
         "thought_icon": "🧠",
         "description": "Educational guide for learning resources and courses",
-        "backend_url": "https://edumentor-backend.com/api",
-        "signal": "lets_go_learn"
     },
     "WellnessBot": {
         "icon": "🧘",
@@ -45,129 +66,117 @@ AGENT_CONFIG = {
         "secondary_color": "#c0392b",
         "thought_icon": "❤️",
         "description": "Mental health and wellness support companion",
-        "backend_url": "https://wellnessbot-backend.com/api",
-        "signal": "lets_go_wellness"
     }
 }
 
-def render_agent_response(agent, response):
-    """Render the agent's response in the UI"""
-    config = AGENT_CONFIG[agent]
-    
-    with st.container():
-        st.markdown(f"""
-        <div style="background-color:{config['color']}20; padding:15px; border-radius:10px; 
-                    border-left:5px solid {config['color']}; margin-bottom:15px">
-            <h3 style="color:{config['color']}; margin:0;">
-                {config['icon']} {agent}
-            </h3>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        with st.expander(f"{response['title']} (Confidence: {response['confidence']:.0%})", expanded=True):
-            st.write(response["content"])
-            if "link" in response:
-                st.markdown(f"[🔗 {response.get('reason', 'Learn more')}]({response['link']})")
-            if "action" in response:
-                st.button(response["action"], key=f"{agent}_{time.time()}")
-            if "followup" in response:
-                st.write(response["followup"])
-        
-        with st.expander(f"{config['thought_icon']} Thought Process"):
-            for i, step in enumerate(response["thought_steps"]):
-                st.markdown(f"""
-                <div style="padding:10px; margin:5px 0; border-left:3px solid {config['secondary_color']}; 
-                            background-color:{config['color']}10;">
-                    <b>Step {i+1}:</b> {step}
-                </div>
-                """, unsafe_allow_html=True)
-
-                if i < len(response["thought_steps"]) - 1:
-                    st.markdown(f"""
-                    <div style="border-left:2px dashed {config['secondary_color']}; 
-                                height:15px; margin-left:15px;"></div>
-                    """, unsafe_allow_html=True)
-
-# Main App Layout
-st.title("📊 Agent Interaction Dashboard")
-st.markdown("Monitor user-agent interactions and AI thought trails")
-
-# Sidebar for agent configuration only
+# Sidebar: Agent toggles and audio input
 with st.sidebar:
-    st.header("Agent Configuration")
+    st.header("⚙️ Configuration")
     for agent in AGENT_CONFIG:
         st.session_state.active_agents[agent] = st.checkbox(
-            f"{AGENT_CONFIG[agent]['icon']} {agent}", 
-            value=st.session_state.active_agents[agent],
-            key=f"active_{agent}"
+            f"{AGENT_CONFIG[agent]['icon']} {agent}",
+            value=st.session_state.active_agents[agent]
         )
-    
-    st.subheader("Audio Input")
+    st.subheader("🎙️ Audio Input")
     audio_bytes = audio_recorder()
     if audio_bytes:
         st.audio(audio_bytes, format="audio/wav")
 
-# Interaction history
-st.subheader("🧾 Interaction History")
+# Main Title
+st.title("📊 Multi-Agent Interaction Dashboard")
+st.markdown("A streamlined view of user interactions and AI decision processes.")
 
+# Interaction display
+st.subheader("🧾 Recent Interactions")
 if st.session_state.interactions:
     for interaction in reversed(st.session_state.interactions):
-        st.markdown(f"""
-        <div style="background-color:#f0f2f6; padding:10px; border-radius:10px; 
-                    margin-bottom:10px;">
-            <strong>🗣 User:</strong> {interaction["user_input"]}
-        </div>
-        """, unsafe_allow_html=True)
-        
-        render_agent_response(
-            interaction["agent"],
-            interaction["response"]
-        )
-else:
-    st.info("No interactions to display yet.")
-
-# Mood and agent status
-st.subheader("Agent Overview")
-
-mood_emoji = {
-    "happy": "😊",
-    "neutral": "😐",
-    "sad": "😢"
-}.get(st.session_state.agent_mood, "🤖")
-
-st.metric("Overall Mood", f"{mood_emoji} {st.session_state.agent_mood.capitalize()}")
-
-st.markdown("### Active Agents")
-for agent, active in st.session_state.active_agents.items():
-    if active:
+        agent = interaction["agent"]
         config = AGENT_CONFIG[agent]
+        response = interaction["response"]
+
+        # User input display
         st.markdown(f"""
-        <div style="background-color:{config['color']}20; padding:10px; border-radius:5px; 
-                    margin:5px 0; border-left:3px solid {config['color']}">
-            {config['icon']} <b>{agent}</b>
-        </div>
+            <div style="background-color:#f8f9fa; padding:15px; border-radius:10px; 
+                        margin-bottom:10px; border-left:4px solid {config['color']};">
+                <strong>🗣️ You:</strong> {interaction["user_input"]}
+            </div>
         """, unsafe_allow_html=True)
 
-# Recent confidence section
-if st.session_state.interactions:
-    st.markdown("### Recent Confidence Scores")
-    latest_confidences = [
-        {"Agent": i["agent"], 
-         "Confidence": i["response"]["confidence"],
-         "Color": AGENT_CONFIG[i["agent"]]["color"]}
-        for i in st.session_state.interactions[-3:]
-    ]
-    
-    for conf in reversed(latest_confidences):
-        st.metric(
-            label=conf["Agent"],
-            value=f"{conf['Confidence']:.0%}",
-            help=f"Confidence in last response from {conf['Agent']}"
-        )
-        st.progress(conf["Confidence"])
+        # Agent response container
+        st.markdown(f"""
+            <div style="background-color:{config['color']}15; padding:15px; border-radius:10px;
+                        border-left:5px solid {config['color']}; margin-bottom:20px;">
+                <h4 style="color:{config['color']}; margin:0 0 10px 0;">
+                    {config['icon']} {agent}
+                </h4>
+                <div style="font-size: 1rem; margin-bottom: 10px;">
+                    <strong>{response['title']}</strong><br/>
+                    {response['content']}
+                </div>
+        """, unsafe_allow_html=True)
 
-# Debug view
-with st.expander("🔍 Debug: View Raw Interaction Data"):
+        if "link" in response:
+            st.markdown(f"[🔗 {response.get('reason', 'Learn more')}]({response['link']})")
+        if "followup" in response:
+            st.markdown(f"💬 _Follow-up:_ {response['followup']}")
+        if "action" in response:
+            st.button(response["action"], key=f"{agent}_{time.time()}")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Thought process
+        with st.expander(f"{config['thought_icon']} Thought Process"):
+            for i, step in enumerate(response["thought_steps"]):
+                st.markdown(f"""
+                    <div style="padding:10px; margin:8px 0; border-left:3px solid {config['secondary_color']}; 
+                                background-color:{config['color']}10; border-radius:5px;">
+                        <b>Step {i+1}:</b> {step}
+                    </div>
+                """, unsafe_allow_html=True)
+else:
+    st.info("No user-agent interactions recorded yet.")
+
+# Overall mood and recent confidence
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.subheader("💡 Agent Overview")
+    mood_emoji = {
+        "happy": "😊",
+        "neutral": "😐",
+        "sad": "😢"
+    }.get(st.session_state.agent_mood, "🤖")
+
+    st.metric("Overall Mood", f"{mood_emoji} {st.session_state.agent_mood.capitalize()}")
+
+    st.markdown("### ✅ Active Agents")
+    for agent, active in st.session_state.active_agents.items():
+        if active:
+            config = AGENT_CONFIG[agent]
+            st.markdown(f"""
+                <div style="background-color:{config['color']}20; padding:10px; border-radius:5px; 
+                            margin:5px 0; border-left:3px solid {config['color']}">
+                    {config['icon']} <b>{agent}</b><br>
+                    <small>{config['description']}</small>
+                </div>
+            """, unsafe_allow_html=True)
+
+with col2:
+    st.subheader("📈 Confidence Levels")
+    if st.session_state.interactions:
+        recent = st.session_state.interactions[-3:]
+        for item in reversed(recent):
+            st.metric(
+                label=item["agent"],
+                value=f"{item['response']['confidence']:.0%}",
+                help="Confidence score of the last response"
+            )
+            st.progress(item["response"]["confidence"])
+    else:
+        st.write("No recent responses.")
+
+# Debug raw data view
+with st.expander("🔍 Debug: Raw Interaction Data"):
     if st.session_state.interactions:
         st.write(st.session_state.interactions)
     else:
