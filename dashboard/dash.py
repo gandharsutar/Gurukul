@@ -36,7 +36,7 @@ if 'active_agents' not in st.session_state:
         "WellnessBot": True
     }
 
-# Agent configuration
+# Agent configuration with backend URLs
 AGENT_CONFIG = {
     "FinancialCrew": {
         "icon": "💰",
@@ -44,6 +44,8 @@ AGENT_CONFIG = {
         "secondary_color": "#27ae60",
         "thought_icon": "📈",
         "description": "Financial advisor specializing in investments and budgeting",
+        "backend_url": "https://your-friends-backend-url.com/api/financialcrew",  # Replace with actual URL
+        "keywords": ["financial", "money", "invest", "budget", "stock"]
     },
     "EduMentor": {
         "icon": "📚",
@@ -51,6 +53,8 @@ AGENT_CONFIG = {
         "secondary_color": "#2980b9",
         "thought_icon": "🧠",
         "description": "Educational guide for learning resources and courses",
+        "backend_url": "https://your-edumentor-backend-url.com/api/edumentor",  # Replace with actual URL
+        "keywords": ["learn", "education", "course", "study", "school"]
     },
     "WellnessBot": {
         "icon": "🧘",
@@ -58,8 +62,37 @@ AGENT_CONFIG = {
         "secondary_color": "#c0392b",
         "thought_icon": "❤️",
         "description": "Mental health and wellness support companion",
+        "backend_url": "https://your-wellnessbot-backend-url.com/api/wellnessbot",  # Replace with actual URL
+        "keywords": ["wellness", "mental", "health", "stress", "meditation"]
     }
 }
+
+def call_agent_backend(agent_name, user_input):
+    """Function to call the specified agent's backend"""
+    try:
+        response = requests.post(
+            AGENT_CONFIG[agent_name]["backend_url"],
+            json={
+                "message": user_input,
+                "action": "process_request",
+                "agent": agent_name
+            },
+            timeout=5
+        )
+        if response.status_code == 200:
+            return response.json()  # Assuming the backend returns JSON
+        else:
+            return {"error": f"Backend returned status code {response.status_code}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+def determine_agent(user_input):
+    """Determine which agent to route to based on keywords"""
+    user_input_lower = user_input.lower()
+    for agent, config in AGENT_CONFIG.items():
+        if any(keyword in user_input_lower for keyword in config["keywords"]):
+            return agent
+    return "WellnessBot"  # Default to WellnessBot if no keywords match
 
 # Sidebar
 with st.sidebar:
@@ -69,10 +102,53 @@ with st.sidebar:
             f"{AGENT_CONFIG[agent]['icon']} {agent}",
             value=st.session_state.active_agents[agent]
         )
+    
     st.subheader("🎙️ Audio Input")
     audio_bytes = audio_recorder()
     if audio_bytes:
         st.audio(audio_bytes, format="audio/wav")
+    
+    # Add a text input for user queries
+    user_input = st.text_input("Ask a question:")
+    if user_input and st.button("Submit"):
+        selected_agent = determine_agent(user_input)
+        
+        if st.session_state.active_agents[selected_agent]:
+            # Call the appropriate backend
+            backend_response = call_agent_backend(selected_agent, user_input)
+            
+            # Create an interaction record
+            interaction = {
+                "timestamp": datetime.now().isoformat(),
+                "agent": selected_agent,
+                "user_input": user_input,
+                "response": {
+                    "title": f"{selected_agent} Response",
+                    "content": backend_response.get("message", "Processing your request..."),
+                    "confidence": backend_response.get("confidence", 0.9),
+                    "thought_steps": [
+                        f"Received {selected_agent}-related query",
+                        f"Routing to {selected_agent} backend",
+                        "Waiting for backend response",
+                        "Processing response for display"
+                    ],
+                    "backend_response": backend_response,
+                    **backend_response.get("ui_elements", {})  # Include any additional UI elements
+                }
+            }
+            
+            # Add any additional elements from backend response
+            if "followup" in backend_response:
+                interaction["response"]["followup"] = backend_response["followup"]
+            if "action" in backend_response:
+                interaction["response"]["action"] = backend_response["action"]
+            if "link" in backend_response:
+                interaction["response"]["link"] = backend_response["link"]
+            
+            st.session_state.interactions.append(interaction)
+            st.success(f"Request sent to {selected_agent} backend!")
+        else:
+            st.warning(f"{selected_agent} is currently inactive. Please activate it in the configuration.")
 
 # Page Title
 st.title("📊 AI Agent Interaction Dashboard")
