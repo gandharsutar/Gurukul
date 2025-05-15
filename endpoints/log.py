@@ -1,10 +1,12 @@
+# Import required modules and libraries
 import os
 from supabase import create_client
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+# Initialize FastAPI app and configure CORS middleware
 app = FastAPI()
 
 app.add_middleware(
@@ -15,6 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Load environment variables and initialize Supabase client with service role key for bypassing RLS
 load_dotenv()
 
 # Initialize client
@@ -35,6 +38,15 @@ def get_agent_log():
     table_name = "agent_logs"  # Replace with your table name
     data = diagnose_table(table_name)
     return JSONResponse(content=data)
+
+@app.post("/agent-log/save")
+async def save_agent_log(request: Request):
+    try:
+        data = await request.json()
+        response = supabase.table("agent_logs").insert(data).execute()
+        return {"status": "success", "data": response.data}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 if __name__ == "__main__":
     table_name = "agent_logs"  # Replace with your table name
