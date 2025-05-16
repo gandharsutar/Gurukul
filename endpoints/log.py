@@ -57,4 +57,4 @@ if __name__ == "__main__":
     print(query)
     
 import uvicorn
-uvicorn.run(app, host="192.168.0.94", port=8000)
+uvicorn.run(app, host="192.168.1.19", port=8501)

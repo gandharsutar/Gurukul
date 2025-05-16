@@ -19,6 +19,9 @@ class AgentConfig(BaseModel):
     name: str
     endpoint: str
     profile: str
+    
+    # Add backend_url to AgentConfig
+    backend_url: str
 
 class LogEntry(BaseModel):
     timestamp: str
@@ -26,24 +29,34 @@ class LogEntry(BaseModel):
     model: str
     similarities: Dict[str, float]
     routed_to: List[str]
+    agent_responses: Dict[str, Dict] # Add agent responses for logging
 
-# External API Endpoints
-AGENT_ENDPOINTS = {
-    "financial_crew": os.getenv("FINANCIAL_API", "http://localhost:8001/process"),
-    "wellness_bot": os.getenv("WELLNESS_API", "http://localhost:8002/process"),
-    "edumentor": os.getenv("EDUMENTOR_API", "http://localhost:8003/process")
+# External API Endpoints (moved to AgentConfig)
+AGENT_CONFIG = {
+    "financial_crew": AgentConfig(
+        name="financial_crew",
+        endpoint=os.getenv("FINANCIAL_API", "http://localhost:8001/process"),
+        profile="I provide advice on money, investments, finance, taxes, retirement, and loans.",
+        backend_url="https://your-friends-backend-url.com/api/financialcrew" # Replace with actual URL
+    ),
+    "wellness_bot": AgentConfig(
+        name="wellness_bot",
+        endpoint=os.getenv("WELLNESS_API", "http://localhost:8002/process"),
+        profile="I help with health, wellbeing, stress, sleep, mental fitness, and diet.",
+        backend_url="https://your-wellnessbot-backend-url.com/api/wellnessbot" # Replace with actual URL
+    ),
+    "edumentor": AgentConfig(
+        name="edumentor",
+        endpoint=os.getenv("EDUMENTOR_API", "http://localhost:8003/process"),
+        profile="I guide on study, courses, learning, education, university, career, and college.",
+        backend_url="https://your-edumentor-backend-url.com/api/edumentor" # Replace with actual URL
+    )
 }
 
-# Agent profiles (used for message similarity)
-AGENT_PROFILES = {
-    "financial_crew": "I provide advice on money, investments, finance, taxes, retirement, and loans.",
-    "wellness_bot": "I help with health, wellbeing, stress, sleep, mental fitness, and diet.",
-    "edumentor": "I guide on study, courses, learning, education, university, career, and college."
-}
 
 # Initialize vectorizer and agent profile vectors
 vectorizer = TfidfVectorizer(stop_words='english')
-profile_texts = list(AGENT_PROFILES.values())
+profile_texts = [config.profile for config in AGENT_CONFIG.values()]
 profile_vectors = vectorizer.fit_transform(profile_texts)
 
 # Configure logging
@@ -98,28 +111,18 @@ def classify_input(message: str) -> List[str]:
     threshold = 0.2  # Minimum similarity score to route to an agent
     results = [
         {"agent": agent, "score": float(sim)}
-        for agent, sim in zip(AGENT_PROFILES.keys(), sims)
+        for agent, sim in zip(AGENT_CONFIG.keys(), sims)
         if sim > threshold
     ]
     routed_agents = [res["agent"] for res in results]
-
-    # Log the classification action
-    log_entry = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "input_message": message,
-        "model": "TF-IDF + Cosine Similarity",
-        "similarities": {agent: float(sim) for agent, sim in zip(AGENT_PROFILES.keys(), sims)},
-        "routed_to": routed_agents
-    }
-    logging.info(json.dumps(log_entry))
-
+    
     return routed_agents
 
 def forward_to_agents(message: str, targets: List[str]) -> Dict[str, Dict]:
     """Send the message to matched agents and return their responses."""
     responses = {}
     for agent in targets:
-        url = AGENT_ENDPOINTS.get(agent)
+        url = AGENT_CONFIG[agent].backend_url # Get URL from AgentConfig
         if not url:
             responses[agent] = {"error": "No URL configured for this agent"}
             continue
@@ -169,6 +172,21 @@ async def route_message(request: MessageRequest):
         )
 
     agent_responses = forward_to_agents(request.message, target_agents)
+
+    # Log the interaction
+    log_entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "input_message": request.message,
+        "model": "TF-IDF + Cosine Similarity",
+        "similarities": {
+            agent: float(cosine_similarity(vectorizer.transform([request.message]), vectorizer.transform([AGENT_CONFIG[agent].profile]))[0][0])
+            for agent in AGENT_CONFIG
+        },
+        "routed_to": target_agents,
+        "agent_responses": agent_responses
+    }
+    logging.info(json.dumps(log_entry))
+    
     return RoutingResponse(
         input=request.message,
         routed_to=target_agents,
@@ -179,9 +197,32 @@ async def route_message(request: MessageRequest):
 async def list_agents():
     """List all available agents and their specialties"""
     return {
-        agent: AGENT_PROFILES[agent].replace("I ", "").replace(".", "")
-        for agent in AGENT_PROFILES
+        agent: AGENT_CONFIG[agent].profile.replace("I ", "").replace(".", "")
+        for agent in AGENT_CONFIG
     }
+
+# New endpoint to call agent backend directly (for /route alternative)
+@app.post("/call_agent/{agent_name}")
+async def call_agent(agent_name: str, request: MessageRequest):
+    """
+    Calls a specific agent's backend with the provided message.
+    """
+    if agent_name not in AGENT_CONFIG:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+    
+    agent_config = AGENT_CONFIG[agent_name]
+    try:
+        response = requests.post(
+            agent_config.backend_url,
+            json={"message": request.message},
+            timeout=5
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            raise HTTPException(status_code=response.status_code, detail=f"Agent backend error: {response.text}")
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Error connecting to agent backend: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

@@ -7,10 +7,10 @@ from audio_recorder_streamlit import audio_recorder
 import random
 import os
 
-# Backend log API endpoint
-LOG_API_URL = "http://192.168.0.94:8000/agent-log/save"
+# FastAPI backend URL
+BACKEND_URL = "http://192.168.0.66:8000"  # Update with your FastAPI backend URL
 
-# Streamlit UI Setup
+# Page configuration and custom CSS
 st.set_page_config(page_title="Agent Dashboard", layout="wide")
 st.markdown("""
     <style>
@@ -27,78 +27,52 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Session state init
+# Initialize session state
+if 'interactions' not in st.session_state:
+    st.session_state.interactions = []
 if 'agent_mood' not in st.session_state:
     st.session_state.agent_mood = "neutral"
 if 'active_agents' not in st.session_state:
     st.session_state.active_agents = {
-        "FinancialCrew": True,
-        "EduMentor": True,
-        "WellnessBot": True
+        "financial_crew": True,
+        "edumentor": True,
+        "wellness_bot": True
     }
 
-# Agent config
+# Agent configuration (Only UI relevant info)
 AGENT_CONFIG = {
-    "FinancialCrew": {
+    "financial_crew": {
         "icon": "💰",
         "color": "#2ecc71",
         "secondary_color": "#27ae60",
         "thought_icon": "📈",
         "description": "Financial advisor specializing in investments and budgeting",
-        "backend_url": "https://your-friends-backend-url.com/api/financialcrew",
         "keywords": ["financial", "money", "invest", "budget", "stock"]
     },
-    "EduMentor": {
+    "edumentor": {
         "icon": "📚",
         "color": "#3498db",
         "secondary_color": "#2980b9",
         "thought_icon": "🧠",
         "description": "Educational guide for learning resources and courses",
-        "backend_url": "https://your-edumentor-backend-url.com/api/edumentor",
         "keywords": ["learn", "education", "course", "study", "school"]
     },
-    "WellnessBot": {
+    "wellness_bot": {
         "icon": "🧘",
         "color": "#e74c3c",
         "secondary_color": "#c0392b",
         "thought_icon": "❤️",
         "description": "Mental health and wellness support companion",
-        "backend_url": "https://your-wellnessbot-backend-url.com/api/wellnessbot",
         "keywords": ["wellness", "mental", "health", "stress", "meditation"]
     }
 }
 
-# Fetch logs from backend
-def fetch_agent_logs():
-    try:
-        response = requests.get(LOG_API_URL)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Error fetching logs: {response.status_code}")
-            return []
-    except Exception as e:
-        st.error(f"Exception while fetching logs: {str(e)}")
-        return []
-
-# Determine agent based on input
-def determine_agent(user_input):
-    user_input_lower = user_input.lower()
-    for agent, config in AGENT_CONFIG.items():
-        if any(keyword in user_input_lower for keyword in config["keywords"]):
-            return agent
-    return "WellnessBot"
-
-# Call backend
 def call_agent_backend(agent_name, user_input):
+    """Function to call the specified agent's backend via FastAPI"""
     try:
         response = requests.post(
-            AGENT_CONFIG[agent_name]["backend_url"],
-            json={
-                "message": user_input,
-                "action": "process_request",
-                "agent": agent_name
-            },
+            f"{BACKEND_URL}/call_agent/{agent_name}",  # Use the new FastAPI endpoint
+            json={"message": user_input},
             timeout=5
         )
         if response.status_code == 200:
@@ -108,6 +82,26 @@ def call_agent_backend(agent_name, user_input):
     except Exception as e:
         return {"error": str(e)}
 
+def determine_agent(user_input):
+    """Determine which agent to route to based on keywords (now via FastAPI)"""
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/route",  # Use the /route endpoint
+            json={"message": user_input},
+            timeout=5
+        )
+        if response.status_code == 200:
+            data = response.json()
+            routed_agents = data["routed_to"]
+            # For simplicity, pick the first agent if multiple are routed
+            return routed_agents[0] if routed_agents else None
+        else:
+            st.error(f"Error routing message: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error connecting to backend: {e}")
+        return None
+
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Agent Configuration")
@@ -116,73 +110,103 @@ with st.sidebar:
             f"{AGENT_CONFIG[agent]['icon']} {agent}",
             value=st.session_state.active_agents[agent]
         )
-
+    
     st.subheader("🎙️ Audio Input")
     audio_bytes = audio_recorder()
     if audio_bytes:
         st.audio(audio_bytes, format="audio/wav")
-
+    
+    # Add a text input for user queries
     user_input = st.text_input("Ask a question:")
     if user_input and st.button("Submit"):
         selected_agent = determine_agent(user_input)
-        if st.session_state.active_agents[selected_agent]:
+        
+        if selected_agent and st.session_state.active_agents[selected_agent]:
+            # Call the appropriate backend via FastAPI
             backend_response = call_agent_backend(selected_agent, user_input)
+            
+            # Create an interaction record
+            interaction = {
+                "timestamp": datetime.now().isoformat(),
+                "agent": selected_agent,
+                "user_input": user_input,
+                "response": {
+                    "title": f"{selected_agent} Response",
+                    "content": backend_response.get("message", "Processing your request..."),
+                    "confidence": backend_response.get("confidence", 0.9),
+                    "thought_steps": [
+                        f"Received {selected_agent}-related query",
+                        f"Routing to {selected_agent} backend",
+                        "Waiting for backend response",
+                        "Processing response for display"
+                    ],
+                    "backend_response": backend_response,
+                    **backend_response.get("ui_elements", {})  # Include any additional UI elements
+                }
+            }
+            
+            # Add any additional elements from backend response
+            if "followup" in backend_response:
+                interaction["response"]["followup"] = backend_response["followup"]
+            if "action" in backend_response:
+                interaction["response"]["action"] = backend_response["action"]
+            if "link" in backend_response:
+                interaction["response"]["link"] = backend_response["link"]
+            
+            st.session_state.interactions.append(interaction)
             st.success(f"Request sent to {selected_agent} backend!")
         else:
-            st.warning(f"{selected_agent} is inactive. Activate it in the sidebar.")
+            st.warning(f"{selected_agent} is currently inactive or could not be determined. Please activate it in the configuration.")
 
-# Page title
+# Page Title
 st.title("📊 AI Agent Interaction Dashboard")
 
-# Layout
+# Swapped layout: LEFT = Confidence + Interactions, RIGHT = Agent Overview
 col1, col2 = st.columns([2, 1])
 
-# LEFT COLUMN
+# LEFT COLUMN: Confidence + Interactions
 with col1:
     st.subheader("📈 Recent Confidence Scores")
-    logs = fetch_agent_logs()
-
-    if logs:
-        for interaction in reversed(logs[-3:]):
-            agent = interaction.get("agent", "Unknown")
-            confidence = interaction.get("response", {}).get("confidence", 0.0)
-            st.metric(label=agent, value=f"{confidence:.0%}")
+    if st.session_state.interactions:
+        for interaction in reversed(st.session_state.interactions[-3:]):
+            agent = interaction["agent"]
+            confidence = interaction["response"]["confidence"]
+            st.metric(
+                label=agent,
+                value=f"{confidence:.0%}",
+                help="Confidence score of the last response"
+            )
             st.progress(confidence)
     else:
         st.info("No confidence scores yet.")
 
     st.subheader("🧾 Recent Interactions")
-    if logs:
-        for interaction in reversed(logs):
-            agent = interaction.get("agent", "Unknown")
-            config = AGENT_CONFIG.get(agent, {
-                "color": "#cccccc",
-                "secondary_color": "#999999",
-                "icon": "🤖",
-                "thought_icon": "💭",
-                "description": "Unknown agent"
-            })
-            response = interaction.get("response", {})
-
-            # User query
+    if st.session_state.interactions:
+        for interaction in reversed(st.session_state.interactions):
+            agent = interaction["agent"]
+            config = AGENT_CONFIG[agent]
+            response = interaction["response"]
+            
+            # User message
             st.markdown(f"""
                 <div style="background-color:#f8f9fa; padding:15px; border-radius:10px; 
                             margin-bottom:10px; border-left:4px solid {config['color']};">
-                    <strong>🗣️ You:</strong> {interaction.get("user_input", "")}
+                    <strong>🗣️ You:</strong> {interaction["user_input"]}
                 </div>
             """, unsafe_allow_html=True)
-
+            
             # Agent response
             st.markdown(f"""
                 <div style="background-color:{config['color']}15; padding:15px; border-radius:10px;
                             border-left:5px solid {config['color']}; margin-bottom:20px;">
                     <h4 style="color:{config['color']}; margin:0 0 10px 0;">
                         {config['icon']} {agent}
-                    </h4>
-                    <div style="font-size: 1rem; margin-bottom: 10px;">
-                        <strong>{response.get('title', '')}</strong><br/>
-                        {response.get('content', '')}
-                    </div>
+                    </h4>   """, unsafe_allow_html=True)
+            st.markdown(f"""
+                <div style="font-size: 1rem; margin-bottom: 10px;">
+                    <strong>{response['title']}</strong><br/>
+                    {response['content']}
+                </div>
             """, unsafe_allow_html=True)
 
             if "link" in response:
@@ -191,22 +215,10 @@ with col1:
                 st.markdown(f"💬 _Follow-up:_ {response['followup']}")
             if "action" in response:
                 st.button(response["action"], key=f"{agent}_{time.time()}")
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # Thought process
-            with st.expander(f"{config['thought_icon']} Thought Process"):
-                for i, step in enumerate(response.get("thought_steps", [])):
-                    st.markdown(f"""
-                        <div style="padding:10px; margin:8px 0; border-left:3px solid {config['secondary_color']}; 
-                                    background-color:{config['color']}10; border-radius:5px;">
-                            <b>Step {i+1}:</b> {step}
-                        </div>
-                    """, unsafe_allow_html=True)
     else:
         st.info("No interactions recorded yet.")
 
-# RIGHT COLUMN
+# RIGHT COLUMN: Agent Overview + Confidence Scores
 with col2:
     st.subheader("💡 Agent Overview")
     mood_emoji = {
@@ -228,6 +240,26 @@ with col2:
                 </div>
             """, unsafe_allow_html=True)
 
-# Debug
-with st.expander("🔍 Debug: Raw Interaction Data"):
-    st.write(logs if logs else "No data yet.")
+    st.markdown("### 📈 Agent Confidence Scores")
+    if st.session_state.interactions:
+        # Get the latest confidence score for each active agent
+        latest_scores = {}
+        for interaction in reversed(st.session_state.interactions):
+            agent = interaction["agent"]
+            if agent not in latest_scores and st.session_state.active_agents[agent]:
+                latest_scores[agent] = interaction["response"]["confidence"]
+        
+        for agent, confidence in latest_scores.items():
+            config = AGENT_CONFIG[agent]
+            st.metric(
+                label=f"{config['icon']} {agent}",
+                value=f"{confidence:.0%}",
+                help=f"Latest confidence score for {agent}"
+            )
+            st.progress(confidence, key=f"progress_{agent}")
+    else:
+        st.info("No confidence scores yet.")
+
+
+
+
