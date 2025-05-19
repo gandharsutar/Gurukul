@@ -246,4 +246,4 @@ async def call_agent(agent_name: str, request: MessageRequest, simulation: Annot
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="192.168.0.66", port=8000)
+    uvicorn.run(app, host="192.168.0.71", port=8000)

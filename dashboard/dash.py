@@ -3,18 +3,6 @@ from datetime import datetime
 import time
 import requests
 from audio_recorder_streamlit import audio_recorder
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Page configuration and custom CSS
 st.set_page_config(page_title="Agent Dashboard", layout="wide")
@@ -23,15 +11,26 @@ st.markdown("""
     .block-container {
         padding-top: 2rem;
         padding-bottom: 2rem;
-        padding-left: 3rem;
-        padding-right: 3rem;
+        padding-left: 2rem;
+        padding-right: 2rem;
     }
     .stExpander > summary {
         font-weight: 600;
         font-size: 1.1rem;
     }
-    table td, table th {
-        font-size: 0.9rem;
+    table.custom-table {
+        font-size: 0.85rem;
+        width: auto;
+        max-width: 100%;
+        border-collapse: collapse;
+    }
+    .custom-table th, .custom-table td {
+        padding: 6px 10px;
+    }
+    .table-container {
+        overflow-x: auto;
+        max-width: 1000px;
+        margin: 0 auto;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -174,16 +173,6 @@ st.title("📊 AI Agent Interaction Dashboard")
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader("📈 Recent Confidence Scores")
-    if st.session_state.interactions:
-        for interaction in reversed(st.session_state.interactions[-3:]):
-            agent = interaction["agent"]
-            confidence = interaction["response"]["confidence"]
-            st.metric(label=agent, value=f"{confidence:.0%}", help="Confidence score of the last response")
-            st.progress(confidence)
-    else:
-        st.info("No confidence scores yet.")
-
     st.subheader("🧾 Recent Interactions")
     supabase_interactions = fetch_agent_logs()
     if supabase_interactions:
@@ -198,29 +187,31 @@ with col1:
             flat_row = {key.replace("_", " ").capitalize(): value for key, value in interaction.items()}
             table_data.append(flat_row)
 
-        # Generate HTML table with color-coded rows
-        st.markdown("<h5>🟦 Color-Coded Interactions</h5>", unsafe_allow_html=True)
+        # HTML table only, heading removed
         table_html = """
-        <table style="width:100%; border-collapse:collapse;">
+        <div class="table-container">
+        <table class="custom-table">
           <thead>
-            <tr style="background-color:#f0f0f0;">
+            <tr>
               {}
             </tr>
           </thead>
           <tbody>
-        """.format("".join(f"<th style='text-align:left; padding:6px;'>{col}</th>" for col in table_data[0].keys()))
+        """.format("".join(f"<th>{col}</th>" for col in table_data[0].keys()))
 
         for row in table_data:
             agent_name = row.get("Agent name", "")
             agent_config = AGENT_CONFIG.get(agent_name, {})
-            color = agent_config.get("color", "#ffffff") + "30"  # light transparent
+            color = agent_config.get("color", "#ffffff") + "30"
 
             table_html += f"<tr style='background-color:{color};'>"
             for value in row.values():
-                table_html += f"<td style='padding:6px; border-bottom:1px solid #ddd;'>{value}</td>"
+                str_value = str(value)
+                display_value = str_value[:25] + "..." if len(str_value) > 25 else str_value
+                table_html += f"<td title='{str_value}'>{display_value}</td>"
             table_html += "</tr>"
 
-        table_html += "</tbody></table>"
+        table_html += "</tbody></table></div>"
         st.markdown(table_html, unsafe_allow_html=True)
     else:
         st.info("No interactions recorded yet.")
@@ -251,7 +242,3 @@ with st.expander("🔍 Debug: Raw Interaction Data"):
         st.write(st.session_state.interactions)
     else:
         st.write("No data yet.")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="192.168.0.71", port=8000)
