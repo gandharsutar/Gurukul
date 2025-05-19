@@ -39,15 +39,6 @@ def get_agent_log():
     data = diagnose_table(table_name)
     return JSONResponse(content=data)
 
-@app.post("/agent-log/save")
-async def save_agent_log(request: Request):
-    try:
-        data = await request.json()
-        response = supabase.table("agent_logs").insert(data).execute()
-        return {"status": "success", "data": response.data}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
 if __name__ == "__main__":
     table_name = "agent_logs"  # Replace with your table name
     query = diagnose_table(table_name)
@@ -57,4 +48,4 @@ if __name__ == "__main__":
     print(query)
     
 import uvicorn
-uvicorn.run(app, host="192.168.1.19", port=8501)
+uvicorn.run(app, host="192.168.0.71", port=8000)
