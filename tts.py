@@ -1,70 +1,48 @@
 from fastapi import FastAPI, Request
-from pydantic import BaseModel
-from uuid import uuid4
-import requests
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from gtts import gTTS
 import os
+import uuid
 
+# Init
 app = FastAPI()
+os.makedirs("audio", exist_ok=True)
 
-BHASHINI_API_URL = "https://dhruva-api.bhashini.gov.in/services/inference/pipeline"
-BHASHINI_AUTH_TOKEN = "YOUR_BHASHINI_API_KEY"  # Replace with your token
-OUTPUT_DIR = "audio_outputs"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# CORS (allow frontend access)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-class TTSRequest(BaseModel):
-    text: str
-    language: str  # e.g., "hi" for Hindi, "en" for English
-    session_id: str
+@app.post("/speak")
+async def speak(request: Request):
+    data = await request.json()
+    text = data.get("text", "")
+    lang = data.get("lang", "en")  # Default to English
 
-@app.post("/generate-tts")
-def generate_tts(req: TTSRequest):
-    output_filename = f"{req.session_id}_{uuid4().hex}.mp3"
-    output_path = os.path.join(OUTPUT_DIR, output_filename)
+    if not text:
+        return {"error": "Text is required"}
 
-    payload = {
-        "pipelineTasks": [
-            {
-                "taskType": "tts",
-                "config": {
-                    "language": {
-                        "sourceLanguage": req.language
-                    },
-                    "gender": "female"
-                }
-            }
-        ],
-        "inputData": {
-            "input": [
-                {
-                    "source": req.text
-                }
-            ]
-        }
-    }
+    try:
+        # Create unique file
+        file_id = f"{uuid.uuid4().hex}.mp3"
+        file_path = f"audio/{file_id}"
 
-    headers = {
-        "Authorization": f"Bearer {BHASHINI_AUTH_TOKEN}",
-        "Content-Type": "application/json"
-    }
+        # Generate speech
+        tts = gTTS(text=text, lang=lang)
+        tts.save(file_path)
 
-    response = requests.post(BHASHINI_API_URL, headers=headers, json=payload)
+        return {"audio_url": f"/audio/{file_id}"}
+    except Exception as e:
+        return {"error": str(e)}
 
-    if response.status_code == 200:
-        audio_url = response.json()["pipelineResponse"][0]["audio"][0]["audioUri"]
-        audio_data = requests.get(audio_url).content
-        with open(output_path, "wb") as f:
-            f.write(audio_data)
-        return {
-            "audio_path": f"/audio/{output_filename}",
-            "session_id": req.session_id
-        }
-    else:
-        return {"error": "Failed to fetch audio from Bhashini", "details": response.text}
-
-# Serve audio files
-from fastapi.staticfiles import StaticFiles
-app.mount("/audio", StaticFiles(directory=OUTPUT_DIR), name="audio")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="192.168.0.71", port=8000)
+@app.get("/audio/{filename}")
+async def get_audio(filename: str):
+    path = os.path.join("audio", filename)
+    if os.path.exists(path):
+        return FileResponse(path, media_type="audio/mpeg")
+    return {"error": "File not found"}
