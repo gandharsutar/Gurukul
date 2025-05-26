@@ -20,13 +20,12 @@ app.add_middleware(
 )
 
 @app.post("/speak")
-async def speak(request: Request, text: str = Query(None)):
+async def speak(request: Request, text: str = Query(None), lang: str = Query("en")):
     try:
         # 1. If text is provided as a query parameter
         if text:
             input_text = text
-
-        # 2. Otherwise try to extract from JSON body
+            language = lang
         else:
             body = await request.body()
             if not body:
@@ -38,6 +37,7 @@ async def speak(request: Request, text: str = Query(None)):
                 return {"error": "Invalid JSON in request body"}
 
             input_text = data.get("text", "")
+            language = data.get("lang", "en")
 
         if not input_text:
             return {"error": "Text is required"}
@@ -46,13 +46,14 @@ async def speak(request: Request, text: str = Query(None)):
         file_id = f"{uuid.uuid4().hex}.mp3"
         file_path = os.path.join("audio", file_id)
 
-        # Generate audio with gTTS
-        tts = gTTS(text=input_text, lang="en")
+        # Generate audio with gTTS using selected language
+        tts = gTTS(text=input_text, lang=language)
         tts.save(file_path)
 
         return {"audio_url": f"/audio/{file_id}"}
     except Exception as e:
         return {"error": str(e)}
+
 
 @app.get("/audio/{filename}")
 async def get_audio(filename: str):
@@ -63,4 +64,4 @@ async def get_audio(filename: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="192.168.0.78", port=8000)
+    uvicorn.run(app, host="192.168.0.111", port=8000)
