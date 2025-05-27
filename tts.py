@@ -1,67 +1,48 @@
-from fastapi import FastAPI, Request, Query
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from gtts import gTTS
-import os
+from fastapi import FastAPI, HTTPException, Body
+from pydantic import BaseModel
+from typing import Dict, Any
 import uuid
 import json
+import os
 
-# Init
 app = FastAPI()
-os.makedirs("audio", exist_ok=True)
 
-# CORS (allow frontend access)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# In-memory store (can be replaced with DB or file persistence)
+TTS_GRAPH_STORE = {}
 
-@app.post("/speak")
-async def speak(request: Request, text: str = Query(None), lang: str = Query("en")):
-    try:
-        # 1. If text is provided as a query parameter
-        if text:
-            input_text = text
-            language = lang
-        else:
-            body = await request.body()
-            if not body:
-                return {"error": "No text provided in query or body"}
+# Endpoint to accept a full TTS graph (like tts.json)
+@app.post("/upload-graph/")
+def upload_tts_graph(graph: Dict[str, Any] = Body(...)):
+    graph_id = str(uuid.uuid4())
+    TTS_GRAPH_STORE[graph_id] = graph
+    return {"graph_id": graph_id, "message": "Graph uploaded successfully."}
 
-            try:
-                data = await request.json()
-            except json.JSONDecodeError:
-                return {"error": "Invalid JSON in request body"}
+# Endpoint to retrieve a specific TTS graph
+@app.get("/graph/{graph_id}")
+def get_graph(graph_id: str):
+    graph = TTS_GRAPH_STORE.get(graph_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="Graph not found.")
+    return graph
 
-            input_text = data.get("text", "")
-            language = data.get("lang", "en")
+# Endpoint to simulate audio generation
+@app.post("/generate-audio/{graph_id}")
+def simulate_audio_generation(graph_id: str):
+    graph = TTS_GRAPH_STORE.get(graph_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="Graph not found.")
 
-        if not input_text:
-            return {"error": "Text is required"}
+    # Example: Fetch the final node (SaveAudioMP3) and simulate output
+    final_nodes = [v for k, v in graph.items() if v["class_type"] == "SaveAudioMP3"]
+    if not final_nodes:
+        raise HTTPException(status_code=400, detail="No audio output node found.")
 
-        # Create unique filename for audio file
-        file_id = f"{uuid.uuid4().hex}.mp3"
-        file_path = os.path.join("audio", file_id)
-
-        # Generate audio with gTTS using selected language
-        tts = gTTS(text=input_text, lang=language)
-        tts.save(file_path)
-
-        return {"audio_url": f"/audio/{file_id}"}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.get("/audio/{filename}")
-async def get_audio(filename: str):
-    path = os.path.join("audio", filename)
-    if os.path.exists(path):
-        return FileResponse(path, media_type="audio/mpeg")
-    return {"error": "File not found"}
-
+    fake_output_path = f"audio/{graph_id}.mp3"
+    return {
+        "message": "Audio generation simulated.",
+        "output": fake_output_path,
+        "graph_metadata": [v["_meta"] for v in final_nodes]
+    }
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="192.168.0.111", port=8000)
+    uvicorn.run(app, host="192.168.0.108", port=8000)
