@@ -1,0 +1,41 @@
+{
+  "13": {
+    "inputs": {
+      "speaker_name": "str"
+    },
+    "class_type": "KokoroSpeaker",
+    "_meta": {
+      "title": "Kokoro Speaker"
+    }
+  },
+  "14": {
+    "inputs": {
+      "text": "str",
+      "speed": 0.9500000000000002,
+      "lang": "str",
+      "speaker": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "KokoroGenerator",
+    "_meta": {
+      "title": "Kokoro Generator"
+    }
+  },
+  "15": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "quality": "V0",
+      "audioUI": "",
+      "audio": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Save Audio (MP3)"
+    }
+  }
+}
