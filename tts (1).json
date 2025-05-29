@@ -1,0 +1,41 @@
+{
+  "52": {
+    "inputs": {
+      "text": "A inteligência artificial está mudando rapidamente a forma como vivemos e trabalhamos. Com a ajuda de modelos de texto para fala, as máquinas agora podem se comunicar com as pessoas de maneira natural e clara. Essa tecnologia está abrindo novas possibilidades na comunicação, na educação e na acessibilidade. É realmente empolgante ver como a inovação pode melhorar a vida cotidiana.\n",
+      "speed": 1,
+      "lang": "Japanese",
+      "speaker": [
+        "53",
+        0
+      ]
+    },
+    "class_type": "KokoroGenerator",
+    "_meta": {
+      "title": "Kokoro Generator"
+    }
+  },
+  "53": {
+    "inputs": {
+      "speaker_name": "am_onyx"
+    },
+    "class_type": "KokoroSpeaker",
+    "_meta": {
+      "title": "Kokoro Speaker"
+    }
+  },
+  "56": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "quality": "V0",
+      "audioUI": "",
+      "audio": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Save Audio (MP3)"
+    }
+  }
+}
