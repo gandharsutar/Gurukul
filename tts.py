@@ -1,226 +1,211 @@
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from motor.motor_asyncio import AsyncIOMotorClient
-import datetime
-import aiohttp
+import streamlit as st
 import os
-import uuid
-import logging
-import json
-from bson.objectid import ObjectId
-from typing import Optional
+import requests
+import base64
+from datetime import datetime
+import time
+import glob
 
-# Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configuration - MUST USE ABSOLUTE PATHS
+# Declare as globals first
+global COMFYUI_OUTPUT_DIR, AUDIO_OUTPUT_DIR
+COMFYUI_API_URL = "http://localhost:8188/prompt"
+COMFYUI_OUTPUT_DIR = "E:\ComfyUI_windows_portable\ComfyUI\output"  # MUST match ComfyUI's output directory
+AUDIO_OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "audio_output"))
 
-# Config
-MONGODB_URI = "mongodb+srv://blackholeinfiverse1:ImzKJBDjogqox4nQ@user.y9b2fg6.mongodb.net/?retryWrites=true&w=majority&appName=user"
-DB_NAME = "user_data"
-COLLECTION_NAME = "tts"
-AUDIO_SAVE_DIR = "audio_files"
-DEFAULT_COMFYUI_URL = "POST http://127.0.0.1:8188/"
+# Ensure directories exist
+os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
 
-# Ensure directory exists
-os.makedirs(AUDIO_SAVE_DIR, exist_ok=True)
+# Set page config
+st.set_page_config(page_title="Kokoro TTS Generator", layout="wide")
+st.title("Kokoro Text-to-Speech Generator")
 
-# FastAPI App
-app = FastAPI()
-client = AsyncIOMotorClient(MONGODB_URI)
-db = client[DB_NAME]
-collection = db[COLLECTION_NAME]
+def validate_paths():
+    """Ensure all paths are on the same drive and properly formatted."""
+    global COMFYUI_OUTPUT_DIR, AUDIO_OUTPUT_DIR  # Declare as globals
+    
+    errors = []
+    
+    # Convert all paths to absolute and normalized
+    COMFYUI_OUTPUT_DIR = os.path.abspath(COMFYUI_OUTPUT_DIR)
+    AUDIO_OUTPUT_DIR = os.path.abspath(AUDIO_OUTPUT_DIR)
+    
+    # Check if paths are on same drive (Windows only)
+    if os.name == 'nt':
+        drives = {os.path.splitdrive(p)[0].upper() for p in [COMFYUI_OUTPUT_DIR, AUDIO_OUTPUT_DIR] if p}
+        if len(drives) > 1:
+            errors.append(f"Paths span multiple drives: {drives}. All paths must be on the same drive.")
+    
+    # Verify directories exist
+    for name, path in [("ComfyUI Output", COMFYUI_OUTPUT_DIR), 
+                      ("Audio Output", AUDIO_OUTPUT_DIR)]:
+        if not os.path.exists(path):
+            errors.append(f"{name} directory does not exist: {path}")
+        elif not os.access(path, os.W_OK):
+            errors.append(f"No write permissions for {name} directory: {path}")
+    
+    return errors
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Request Models
-class AudioFetchRequest(BaseModel):
-    source_url: str = DEFAULT_COMFYUI_URL
-
-class KokoroTTSRequest(BaseModel):
-    text: str
-    speaker_name: Optional[str] = None
-    language: Optional[str] = None
-    speed: float = 1.0
-
-# Get Kokoro options
-async def get_kokoro_options():
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{DEFAULT_COMFYUI_URL}object_info") as response:
-                if response.status != 200:
-                    return {"speakers": ["am_onyx"], "languages": ["English"]}
-                object_info = await response.json()
-                speakers = object_info.get("KokoroSpeaker", {}).get("input", {}).get("speaker_name", {}).get("options", ["am_onyx"])
-                languages = object_info.get("KokoroGenerator", {}).get("input", {}).get("lang", {}).get("options", ["English"])
-                return {"speakers": speakers, "languages": languages}
-    except Exception as e:
-        logger.error(f"Error fetching Kokoro options: {str(e)}")
-        return {"speakers": ["am_onyx"], "languages": ["English"]}
-
-# Fetch audio from URL
-@app.post("/fetch-audio/")
-async def fetch_audio(data: AudioFetchRequest):
-    file_id = str(uuid.uuid4())
-    filename = f"{file_id}.mp3"
-    filepath = os.path.join(AUDIO_SAVE_DIR, filename)
-
-    logger.info(f"Fetching audio from: {data.source_url}")
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(data.source_url) as response:
-                if response.status != 200:
-                    error_detail = await response.text()
-                    raise HTTPException(status_code=400, detail=f"Failed to download audio: {response.status} - {error_detail}")
-                
-                content_type = response.headers.get("Content-Type", "")
-                if "audio" not in content_type:
-                    error_detail = await response.text()
-                    raise HTTPException(status_code=400, detail=f"Invalid content-type '{content_type}': {error_detail[:100]}")
-
-                data_bytes = await response.read()
-                if len(data_bytes) < 1024:
-                    raise HTTPException(status_code=400, detail="Downloaded file too small to be valid audio.")
-
-                with open(filepath, "wb") as f:
-                    f.write(data_bytes)
-
-    except Exception as e:
-        logger.error(f"Error fetching audio: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error fetching audio: {str(e)}")
-
-    metadata = {
-        "file_id": file_id,
-        "filename": filename,
-        "saved_path": filepath,
-        "source_url": data.source_url,
-        "timestamp": datetime.datetime.now(datetime.timezone.utc),
-    }
-    await collection.insert_one(metadata)
-    logger.info(f"Stored metadata in MongoDB: {metadata}")
-
-    return {"message": "Audio fetched and metadata stored", "file_id": file_id, "path": filepath}
-
-# Get Kokoro options
-@app.get("/kokoro-options")
-async def kokoro_options():
-    return await get_kokoro_options()
-
-# Generate TTS
-@app.post("/generate-kokoro-tts/")
-async def generate_kokoro_tts(data: KokoroTTSRequest):
-    try:
-        # Build your workflow dictionary using the uploaded JSON structure
-        workflow = {
-            "52": {
-                "inputs": {
-                    "text": data.text,
-                    "speed": data.speed,
-                    "lang": data.language or "Japanese",
-                    "speaker": ["53", 0]
-                },
-                "class_type": "KokoroGenerator",
-                "_meta": {"title": "Kokoro Generator"}
+def generate_workflow(text, speaker, speed, lang):
+    """Generate workflow that saves directly to ComfyUI's output directory."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"tts_output_{timestamp}"
+    
+    return {
+        "1": {
+            "inputs": {"speaker_name": speaker},
+            "class_type": "KokoroSpeaker"
+        },
+        "2": {
+            "inputs": {
+                "text": text,
+                "speed": speed,
+                "lang": lang,
+                "speaker": ["1", 0]
             },
-            "53": {
-                "inputs": {
-                    "speaker_name": data.speaker_name or "am_onyx"
-                },
-                "class_type": "KokoroSpeaker",
-                "_meta": {"title": "Kokoro Speaker"}
+            "class_type": "KokoroGenerator"
+        },
+        "5": {
+            "inputs": {
+                "filename_prefix": filename,  # Relative to ComfyUI's output dir
+                "quality": "V0",
+                "audio": ["2", 0]
             },
-            "56": {
-                "inputs": {
-                    "filename_prefix": "audio/ComfyUI",
-                    "quality": "V0",
-                    "audioUI": "",
-                    "audio": ["52", 0]
-                },
-                "class_type": "SaveAudioMP3",
-                "_meta": {"title": "Save Audio (MP3)"}
-            }
+            "class_type": "SaveAudioMP3"
         }
+    }, filename
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post("http://127.0.0.1:8188/prompt", json={"prompt": workflow}) as response:
-                if response.status != 200:
-                    error_detail = await response.text()
-                    raise HTTPException(status_code=400, detail=f"Failed to send workflow: {response.status} - {error_detail}")
-                result = await response.json()
-                prompt_id = result.get("prompt_id")
-                if not prompt_id:
-                    raise HTTPException(status_code=500, detail="No prompt_id returned")
-                return {"message": "TTS generation started", "prompt_id": prompt_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"TTS generation error: {str(e)}")
+def find_generated_file(base_filename):
+    """Find the generated file in ComfyUI's output directory."""
+    pattern = os.path.join(COMFYUI_OUTPUT_DIR, f"{base_filename}*.mp3")
+    files = glob.glob(pattern)
+    
+    if not files:
+        # Check with counter suffix (ComfyUI adds _00001, _00002, etc.)
+        pattern = os.path.join(COMFYUI_OUTPUT_DIR, f"{base_filename}_*.mp3")
+        files = glob.glob(pattern)
+    
+    if files:
+        # Get most recently modified file
+        return max(files, key=os.path.getmtime)
+    return None
 
-# Check status
-@app.get("/check-generation/{prompt_id}")
-async def check_generation(prompt_id: str):
+def copy_to_final_location(src_path, dest_dir):
+    """Copy file to our final output directory."""
+    filename = os.path.basename(src_path)
+    dest_path = os.path.join(dest_dir, filename)
+    
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{DEFAULT_COMFYUI_URL}history/{prompt_id}") as response:
-                if response.status != 200:
-                    return {"status": "unknown", "message": "Unable to fetch from ComfyUI"}
-
-                history = await response.json()
-                prompt_data = history.get(prompt_id, {})
-                if "outputs" in prompt_data:
-                    for node_id, outputs in prompt_data["outputs"].items():
-                        if "audio" in outputs and isinstance(outputs["audio"], dict):
-                            filename = outputs["audio"]["filename"]
-                            await collection.update_one(
-                                {"prompt_id": prompt_id},
-                                {"$set": {
-                                    "status": "completed",
-                                    "audio_filename": filename,
-                                    "audio_url": f"{DEFAULT_COMFYUI_URL}view?filename={filename}"
-                                }}
-                            )
-                            return {
-                                "status": "completed",
-                                "audio_url": f"{DEFAULT_COMFYUI_URL}view?filename={filename}",
-                                "filename": filename
-                            }
-
-                if prompt_data.get("executing"):
-                    return {"status": "processing"}
-
-                return {"status": "error", "message": "No output found."}
+        with open(src_path, "rb") as src, open(dest_path, "wb") as dest:
+            dest.write(src.read())
+        return dest_path
     except Exception as e:
-        logger.error(f"Check status error: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        st.error(f"Failed to copy file: {str(e)}")
+        return None
 
-# Serve audio by file_id
-@app.get("/audio/{file_id}")
-async def get_audio(file_id: str):
-    audio_metadata = await collection.find_one({"file_id": file_id}) or await collection.find_one({"_id": ObjectId(file_id)})
-    if not audio_metadata:
-        raise HTTPException(status_code=404, detail="Audio file not found in DB.")
-    filepath = audio_metadata.get("saved_path")
-    if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail="Audio file not found on disk.")
-    return FileResponse(path=filepath, media_type="audio/mpeg", filename=audio_metadata["filename"])
+# Validate paths at startup
+path_errors = validate_paths()
+if path_errors:
+    st.error("Configuration Errors:")
+    for error in path_errors:
+        st.error(error)
+    st.stop()
 
-# List audio
-@app.get("/list-audio")
-async def list_audio():
-    cursor = collection.find().sort("timestamp", -1)
-    audio_files = await cursor.to_list(length=100)
-    for audio in audio_files:
-        audio["_id"] = str(audio["_id"])
-    return {"audio_files": audio_files}
+# Main form
+with st.form("tts_form"):
+    text = st.text_area("Text to synthesize", "I am a synthesized robot", height=100)
+    speaker = st.selectbox("Speaker", ["af_sarah", "af_emma", "af_liam", "af_olivia"])
+    speed = st.slider("Speed", 0.5, 2.0, 1.0, 0.1)
+    lang = st.selectbox("Language", ["English", "Japanese", "Spanish", "French", "German"])
+    
+    if st.form_submit_button("Generate Speech"):
+        if not text.strip():
+            st.warning("Please enter text to synthesize")
+        else:
+            workflow, base_filename = generate_workflow(text, speaker, speed, lang)
+            
+            with st.expander("Workflow Details"):
+                st.json(workflow)
+                st.info(f"Files will be saved with prefix: {base_filename}")
+                st.info(f"ComfyUI Output Directory: {COMFYUI_OUTPUT_DIR}")
+                st.info(f"Final Output Directory: {AUDIO_OUTPUT_DIR}")
+            
+            try:
+                # Submit to ComfyUI
+                response = requests.post(COMFYUI_API_URL, json={"prompt": workflow})
+                response.raise_for_status()
+                prompt_id = response.json()["prompt_id"]
+                
+                # Monitor for completion
+                st.info(f"Processing with prompt ID: {prompt_id}")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                start_time = time.time()
+                timeout = 120  # seconds
+                success = False
+                
+                while time.time() - start_time < timeout:
+                    # Check for file generation
+                    generated_path = find_generated_file(base_filename)
+                    if generated_path:
+                        success = True
+                        break
+                    
+                    # Update progress
+                    elapsed = time.time() - start_time
+                    progress = min(elapsed / timeout, 1.0)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Status: Processing ({elapsed:.1f}s)")
+                    time.sleep(1)
+                
+                progress_bar.empty()
+                
+                if success:
+                    # Copy to our final location
+                    final_path = copy_to_final_location(generated_path, AUDIO_OUTPUT_DIR)
+                    
+                    if final_path:
+                        st.success(f"Audio generated successfully!")
+                        
+                        # Display audio
+                        with open(final_path, "rb") as f:
+                            audio_bytes = f.read()
+                        st.audio(audio_bytes, format="audio/mp3")
+                        
+                        # Download link
+                        b64 = base64.b64encode(audio_bytes).decode()
+                        filename = os.path.basename(final_path)
+                        href = f'<a href="data:file/mp3;base64,{b64}" download="{filename}">Download MP3</a>'
+                        st.markdown(href, unsafe_allow_html=True)
+                    else:
+                        st.error("Failed to move generated file to final location")
+                else:
+                    st.error("Audio generation timed out")
+                    st.info(f"Checked for files matching: {os.path.join(COMFYUI_OUTPUT_DIR, base_filename)}*.mp3")
+                    
+            except Exception as e:
+                st.error(f"Generation failed: {str(e)}")
 
-# Run app locally
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="192.168.0.108", port=8000)
+# Debug information
+with st.expander("Debug Information"):
+    st.subheader("Directory Contents")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("ComfyUI Output Directory:")
+        try:
+            st.write(os.listdir(COMFYUI_OUTPUT_DIR))
+        except Exception as e:
+            st.error(str(e))
+    
+    with col2:
+        st.write("Audio Output Directory:")
+        try:
+            st.write(os.listdir(AUDIO_OUTPUT_DIR))
+        except Exception as e:
+            st.error(str(e))
+    
+    st.subheader("System Information")
+    st.write(f"Current working directory: {os.getcwd()}")
+    st.write(f"Python version: {os.sys.version}")
