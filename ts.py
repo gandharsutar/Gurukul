@@ -1,85 +1,50 @@
-from fastapi import FastAPI, HTTPException, Request, Form
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-import pyttsx3
-import tempfile
-import os
-from pydub import AudioSegment
-from datetime import datetime
-import uuid
+import streamlit as st
+import requests
+import time
+from pathlib import Path
+from streamlit.components.v1 import html
+from pydantic import BaseModel
+from fastapi import FastAPI
 
-app = FastAPI()
+API_BASE="http://192.168.1.103:8001"
+st.title("🗣️ Audio Player")
 
-# Create necessary directories
-os.makedirs("tts_outputs", exist_ok=True)
+text_input=st.text_area("Enter your text",height=150)
+voice = st.selectbox("Choose voice", ["en-US-AriaNeural", "en-US-GuyNeural", "en-GB-LibbyNeural"])
 
-# Initialize TTS engine with default settings
-engine = pyttsx3.init()
-engine.setProperty('rate', 150)  # Fixed speech rate
-voices = engine.getProperty('voices')
-if voices:  # Use first available voice
-    engine.setProperty('voice', voices[0].id)
+if st.button("Generate"):
+    if not text_input.strip():
+        st.error("Please enter some text.")
+    else:
+        with st.spinner("Generating audio..."):
+            response = requests.post(
+                f"{API_BASE}/api/generate",
+                data={"text": text_input, "voice": voice}
+            )
 
-@app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Simple TTS Converter</title>
-        <style>
-            body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-            textarea { width: 100%; height: 200px; margin-bottom: 15px; }
-            button { padding: 10px 15px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
-            button:hover { background-color: #45a049; }
-        </style>
-    </head>
-    <body>
-        <h1>Simple Text-to-Speech Converter</h1>
-        <form action="/generate-speech/" method="post">
-            <textarea name="text" placeholder="Enter text here..." required></textarea>
-            <button type="submit">Convert to Speech</button>
-        </form>
-    </body>
-    </html>
-    """
+        if response.status_code == 200:
+            data = response.json()
+            audio_url = f"{API_BASE}{data['audio_url']}"
+            filename = data['filename']
+            st.success("Audio generated!")
 
-@app.post("/generate-speech/")
-async def generate_speech(text: str = Form(...)):
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="Please enter some text.")
-    
-    try:
-        # Create temp WAV file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as wav_file:
-            wav_path = wav_file.name
-        
-        # Generate speech
-        engine.save_to_file(text, wav_path)
-        engine.runAndWait()
+            # Fetch the audio file
+            audio_response = requests.get(audio_url)
+            audio_path = Path(f"./{filename}")
+            audio_path.write_bytes(audio_response.content)
 
-        # Create output filename
-        mp3_filename = f"tts_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
-        mp3_path = os.path.join("tts_outputs", mp3_filename)
-
-        # Convert to MP3
-        sound = AudioSegment.from_wav(wav_path)
-        sound.export(mp3_path, format="mp3")
-
-        return FileResponse(
-            mp3_path,
-            media_type="audio/mp3",
-            headers={"Content-Disposition": f"attachment; filename={mp3_filename}"}
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-    finally:
-        if 'wav_path' in locals() and os.path.exists(wav_path):
-            os.remove(wav_path)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="192.168.0.72", port=8000)
+            # Audio controls using HTML5
+            audio_html = f"""
+                <audio id="audioPlayer" controls>
+                    <source src="data:audio/mp3;base64,{audio_response.content.encode('base64').decode()}" type="audio/mp3">
+                    Your browser does not support the audio element.
+                </audio>
+                <br>
+                <button onclick="document.getElementById('audioPlayer').play()">Play</button>
+                <button onclick="document.getElementById('audioPlayer').pause()">Pause</button>
+                <button onclick="document.getElementById('audioPlayer').currentTime=0;document.getElementById('audioPlayer').pause()">Stop</button>
+                <button onclick="document.getElementById('audioPlayer').currentTime=0;document.getElementById('audioPlayer').play()">Replay</button>
+            """
+            html(audio_html, height=120)
+        else:
+            st.error(f"Failed to generate audio: {response.text}")

@@ -1,10 +1,10 @@
-# Updated tts.py
 from fastapi import FastAPI, Form, Request, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
-import pyttsx3
+from fastapi.responses import FileResponse, JSONResponse
+import edge_tts
 import uuid
 import os
 from pathlib import Path
+import asyncio
 
 app = FastAPI()
 OUTPUT_DIR = "tts_outputs"
@@ -12,7 +12,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 @app.get("/")
 async def root():
-    return {"message": "TTS Service is running"}
+    return {"message": "Edge TTS Service is running"}
 
 @app.get("/api/audio/{filename}")
 async def get_audio_file(filename: str):
@@ -26,9 +26,9 @@ async def list_audio_files():
     files = [f for f in os.listdir(OUTPUT_DIR) if f.endswith('.mp3')]
     return {"audio_files": files, "count": len(files)}
 
-# POST method to generate audio
+# POST method to generate audio using Edge TTS
 @app.post("/api/generate")
-async def text_to_speech(text: str = Form(...)):
+async def text_to_speech(text: str = Form(...), voice: str = Form("en-US-AriaNeural")):
     if not text:
         raise HTTPException(status_code=400, detail="Text is required")
     
@@ -36,9 +36,11 @@ async def text_to_speech(text: str = Form(...)):
     filepath = os.path.join(OUTPUT_DIR, filename)
     
     try:
-        engine = pyttsx3.init()
-        engine.save_to_file(text, filepath)
-        engine.runAndWait()
+        # Initialize Edge TTS communicator
+        communicate = edge_tts.Communicate(text, voice)
+        
+        # Save the audio to file
+        await communicate.save(filepath)
         
         if not os.path.exists(filepath):
             raise HTTPException(status_code=500, detail="Audio generation failed")
@@ -46,11 +48,12 @@ async def text_to_speech(text: str = Form(...)):
         return JSONResponse({
             "status": "success",
             "audio_url": f"/api/audio/{filename}",
-            "filename": filename
+            "filename": filename,
+            "voice": voice
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="192.168.0.119", port=8001)
+    uvicorn.run(app, host="192.168.1.103", port=8001)
