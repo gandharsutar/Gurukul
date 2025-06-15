@@ -3,7 +3,7 @@ import requests
 import base64
 from streamlit.components.v1 import html
 
-API_BASE = "http://192.168.1.103:8001"
+API_BASE = "http://192.168.1.105:8001"
 
 st.title("🎧 Audio Player with Music Bar")
 
