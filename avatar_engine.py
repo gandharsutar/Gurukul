@@ -16,10 +16,10 @@ from tensorflow.keras.models import load_model
 app = FastAPI(title="LipSync API")
 
 # Define paths for pre-defined avatar images
-FEMALE_AVATAR_1 = "./avatars/female_1.png"
-FEMALE_AVATAR_2 = "./avatars/female_2.png"
-MALE_AVATAR_1 = "./avatars/male_1.png"
-MALE_AVATAR_2 = "./avatars/male_2.png"
+FEMALE_AVATAR_1 = "./avatars/pht1.jpg"
+FEMALE_AVATAR_2 = "./avatars/pht2.jpg"
+MALE_AVATAR_1 = "./avatars/pht3.jpg"
+MALE_AVATAR_2 = "./avatars/pht4.jpg"
 
 # Placeholder for the pre-trained gender detection model
 gender_model = None
