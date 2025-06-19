@@ -1,99 +1,77 @@
 import streamlit as st
 import requests
 import os
-from pathlib import Path
-import base64
 import time
 
-# Configure Streamlit
-st.set_page_config(
-    page_title="LipSync Avatar",
-    page_icon="🎥",
-    layout="centered"
-)
+# ========================
+# Streamlit Configuration
+# ========================
+st.set_page_config(page_title="LipSync Avatar Generator", layout="centered")
 
-# API configuration
-API_URL = "http://192.168.1.105:8001/lipsync/"
-TIMEOUT = 300  # 5 minutes
+st.title("🎙️ LipSync Avatar Generator")
+st.markdown("Enter text below and generate a lip-synced video using AI avatars.")
 
-def get_available_mp3s(folder="tts/tts_outputs"):
-    folder = Path(folder)
-    return [f.name for f in folder.glob("*.mp3")] if folder.exists() else []
+# ========================
+# Backend Configuration
+# ========================
+API_URL = "http://192.168.1.105:8001/api/generate-and-sync"  # Update if hosted remotely
+TIMEOUT = 300  # seconds
 
-def display_video(video_path: str):
-    """Display video with retries for file availability"""
-    max_retries = 5
-    retry_delay = 1
-    
-    for attempt in range(max_retries):
-        try:
-            with open(video_path, "rb") as f:
-                video_bytes = f.read()
-                st.video(video_bytes)
-                return video_bytes
-        except FileNotFoundError:
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay)
-                continue
-            raise
-    return None
+# ========================
+# Video Display Helper
+# ========================
+def display_video(video_path):
+    with open(video_path, "rb") as f:
+        video_bytes = f.read()
+        st.video(video_bytes)
+        return video_bytes
 
+# ========================
+# Main App
+# ========================
 def main():
-    st.title("LipSync Avatar Generator")
-    st.markdown("Generate a lip-synced video using a dynamically selected avatar and audio file.")
+    text_input = st.text_area("Enter text to synthesize", height=150, max_chars=500)
 
-    # Audio selection
-    mp3_files = get_available_mp3s()
-    if not mp3_files:
-        st.warning("No MP3 files found in tts/tts_outputs")
-        return
-        
-    selected_audio = st.selectbox("Select an audio file", mp3_files)
+    if st.button("Generate Lip-Synced Video"):
+        if not text_input.strip():
+            st.warning("Please enter some text.")
+            return
 
-    if st.button("Generate LipSync Video"):
-        with st.spinner("Generating lip-sync video..."):
+        with st.spinner("Processing... This might take a minute or two."):
             try:
-                # Send request to API
-                audio_path = Path("tts/tts_outputs") / selected_audio
-                with open(audio_path, "rb") as audio_file:
-                    files = {"audio": (selected_audio, audio_file, "audio/mpeg")}
-                    response = requests.post(
-                        API_URL,
-                        files=files,
-                        timeout=TIMEOUT
-                    )
+                response = requests.post(
+                    API_URL,
+                    data={"text": text_input.strip()},
+                    timeout=TIMEOUT
+                )
 
                 if response.status_code == 200:
-                    # Save and display video
-                    video_path = f"temp_{selected_audio.replace('.mp3', '.mp4')}"
-                    with open(video_path, "wb") as f:
+                    # Save video
+                    video_filename = f"result_{int(time.time())}.mp4"
+                    with open(video_filename, "wb") as f:
                         f.write(response.content)
 
-                    st.success("Lip-sync video generated successfully!")
-                    video_bytes = display_video(video_path)
+                    st.success("Video generated successfully!")
+                    video_bytes = display_video(video_filename)
 
                     # Download button
                     if video_bytes:
                         st.download_button(
                             label="Download Video",
                             data=video_bytes,
-                            file_name=f"lipsync_{selected_audio.replace('.mp3', '.mp4')}",
+                            file_name=video_filename,
                             mime="video/mp4"
                         )
 
-                    # Clean up
-                    try:
-                        os.remove(video_path)
-                    except Exception as e:
-                        st.warning(f"Could not clean up temporary file: {e}")
                 else:
-                    error_detail = response.json().get("detail", "Unknown error")
-                    st.error(f"API Error: {error_detail}")
+                    try:
+                        error_msg = response.json().get("detail", "Unknown error")
+                    except:
+                        error_msg = response.text
+                    st.error(f"Server error: {error_msg}")
 
             except requests.exceptions.RequestException as e:
                 st.error(f"Connection error: {str(e)}")
-            except Exception as e:
-                st.error(f"An unexpected error occurred: {str(e)}")
 
 if __name__ == "__main__":
     main()

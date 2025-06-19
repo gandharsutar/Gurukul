@@ -10,9 +10,9 @@ import traceback
 
 
 app = FastAPI()
-OUTPUT_DIR = "tts_outputs"
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "tts_outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs("results", exist_ok=True)
+os.makedirs(os.path.join(os.path.dirname(__file__), "results"), exist_ok=True)
 
 
 @app.get("/")
@@ -21,14 +21,14 @@ async def root():
 
 @app.get("/api/audio/{filename}")
 async def get_audio_file(filename: str):
-    filepath = os.path.join(OUTPUT_DIR, filename)
+    filepath = Path(OUTPUT_DIR) / filename
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Audio file not found")
     return FileResponse(path=filepath, filename=filename, media_type='audio/mpeg')
 
 @app.get("/api/list-audio-files")
 async def list_audio_files():
-    files = [f for f in os.listdir(OUTPUT_DIR) if f.endswith('.mp3')]
+    files = [f for f in os.listdir(OUTPUT_DIR) if f.endswith(('.mp3', '.wav'))]
     return {"audio_files": files, "count": len(files)}
 
 async def try_save_with_retries(tts, filepath, retries=3, delay=2):
@@ -51,7 +51,7 @@ async def text_to_speech(text: str = Form(...)):
         text = text[:500]
 
     filename = f"{uuid.uuid4()}.mp3"
-    filepath = os.path.join(OUTPUT_DIR, filename)
+    filepath = Path(OUTPUT_DIR) / filename
 
     try:
         tts = gTTS(text=text, lang='en', slow=False) # 'en' for English, slow=False for faster speech
@@ -76,7 +76,7 @@ async def text_to_speech(text: str = Form(...)):
 async def lip_sync(audio_file: UploadFile = File(...), video_file: UploadFile = File(...)):
     audio_path = f"temp_{audio_file.filename}"
     video_path = f"temp_{video_file.filename}"
-    output_path = f"results/lip_sync_{uuid.uuid4()}.mp4"
+    output_path = Path(os.path.dirname(__file__)) / "results" / f"lip_sync_{uuid.uuid4()}.mp4"
 
     with open(audio_path, "wb") as f:
         f.write(await audio_file.read())
@@ -113,7 +113,7 @@ async def lip_sync(audio_file: UploadFile = File(...), video_file: UploadFile = 
 
 @app.get("/api/video/{filename}")
 async def get_video_file(filename: str):
-    filepath = os.path.join("results", filename)
+    filepath = Path(os.path.dirname(__file__)) / "results" / filename
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Video file not found")
     return FileResponse(path=filepath, filename=filename, media_type='video/mp4')
