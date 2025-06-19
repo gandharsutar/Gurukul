@@ -13,7 +13,7 @@ from keras.models import load_model
 app = FastAPI()
 
 # Directories
-TTS_OUTPUT_DIR = "tts_outputs"
+TTS_OUTPUT_DIR = "tts/tts_outputs"
 RESULTS_DIR = "results"
 AVATAR_DIR = os.path.abspath("avatars")
 GENDER_MODEL_PATH = "gender-recognition-by-voice/results/model.h5"
@@ -41,23 +41,25 @@ AVATARS = {
 
 def extract_features(file_path: str) -> np.ndarray:
     try:
-        X, sample_rate = librosa.load(file_path, sr=None)
-        if len(X) == 0:
-            return np.array([])
+        from scipy.io import wavfile
+        sample_rate, X = wavfile.read(file_path)
 
-        # Updated librosa melspectrogram call
-        mel = np.mean(
-            librosa.feature.melspectrogram(
-                y=X, 
-                sr=sample_rate, 
-                n_mels=128,
-                fmax=8000  # Explicitly set max frequency
-            ).T, 
-            axis=0
-        )
+        if X.ndim > 1:
+            X = X[:, 0]
+
+        X = X.astype(np.float32)
+        X = X / np.max(np.abs(X), axis=0)
+
+        fft_spectrum = np.fft.fft(X)
+        magnitude = np.abs(fft_spectrum[:len(fft_spectrum)//2])
+        mel = np.log1p(magnitude[:128])  # 128 features like melspectrogram
+
+        if mel.size < 128:
+            mel = np.pad(mel, (0, 128 - mel.size), mode='constant')
+
         return mel
     except Exception as e:
-        print("Feature extraction error:", traceback.format_exc())
+        print("Feature extraction error (no numba):", traceback.format_exc())
         return np.array([])
 
 def predict_gender(audio_path: str) -> str:
