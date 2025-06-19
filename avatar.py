@@ -30,7 +30,7 @@ def display_video(video_path):
 # Main App
 # ========================
 def main():
-    text_input = st.text_area("Enter text to synthesize", height=150, max_chars=500)
+    text_input = st.text_area("Enter text to synthesize", height=150, max_chars=3000)
 
     if st.button("Generate Lip-Synced Video"):
         if not text_input.strip():
