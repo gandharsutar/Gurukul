@@ -15,13 +15,16 @@ app = FastAPI()
 # Directories
 TTS_OUTPUT_DIR = "tts/tts_outputs"
 RESULTS_DIR = "results"
-AVATAR_DIR = os.path.abspath("avatars")
+AVATAR_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "avatars"))
 GENDER_MODEL_PATH = "gender-recognition-by-voice/results/model.h5"
 WAV2LIP_PATH = "Wav2Lip"
 WAV2LIP_CHECKPOINT = "checkpoints/wav2lip_gan.pth"
 
 os.makedirs(TTS_OUTPUT_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
+
+# Debug: Print AVATAR_DIR to verify
+print(f"Avatar directory: {AVATAR_DIR}")
 
 # Load gender model once
 gender_model = None
@@ -32,12 +35,20 @@ else:
 
 # Avatar config
 AVATARS = {
-    "female": [os.path.join(AVATAR_DIR, "pht1.jpg"), os.path.join(AVATAR_DIR, "pht2.jpg")],
-    "male": [os.path.join(AVATAR_DIR, "pht3.jpg"), os.path.join(AVATAR_DIR, "pht4.jpg")],
+    "female": [os.path.join(AVATAR_DIR, "pht1.jpg"), 
+               os.path.join(AVATAR_DIR, "pht2.jpg")],
+    "male": [os.path.join(AVATAR_DIR, "pht3.jpg"), 
+             os.path.join(AVATAR_DIR, "pht4.jpg")],
     "default": os.path.join(AVATAR_DIR, "pht1.jpg")
-
 }
 
+# Validate avatar files
+for gender, paths in AVATARS.items():
+    if gender == "default":
+        paths = [paths]  # Convert to list for uniform handling
+    for path in paths:
+        if not os.path.isfile(path):
+            print(f"⚠️ Missing avatar file: {path}")
 
 def extract_features(file_path: str) -> np.ndarray:
     try:
@@ -74,18 +85,19 @@ def predict_gender(audio_path: str) -> str:
     prediction = gender_model.predict(features, verbose=0)[0]
     return "male" if prediction >= 0.5 else "female"
 
-
 def select_avatar(gender: str) -> str:
     import random
-    return random.choice(AVATARS.get(gender, [AVATARS["default"]]))
-
+    avatar_path = random.choice(AVATARS.get(gender, [AVATARS["default"]]))
+    if not os.path.isfile(avatar_path):
+        raise FileNotFoundError(f"Avatar file not found: {avatar_path}")
+    print(f"Selected avatar path: {avatar_path}")
+    return avatar_path
 
 def convert_mp3_to_wav(mp3_path: str, wav_path: str):
     subprocess.run(["ffmpeg", "-y", "-i", mp3_path, wav_path], check=True)
 
-
 def run_wav2lip(audio_path: str, image_path: str, output_path: str):
-    print(f"[DEBUG] Avatar image path: {os.path.abspath(image_path)}")  # Add this line
+    print(f"[DEBUG] Avatar image path: {os.path.abspath(image_path)}")
     subprocess.run([
         "python", "inference.py",
         "--checkpoint_path", WAV2LIP_CHECKPOINT,
@@ -93,7 +105,6 @@ def run_wav2lip(audio_path: str, image_path: str, output_path: str):
         "--audio", os.path.abspath(audio_path),
         "--outfile", os.path.abspath(output_path)
     ], cwd=WAV2LIP_PATH, check=True)
-
 
 @app.post("/api/generate-and-sync")
 async def generate_and_sync(text: str = Form(...)):
@@ -136,11 +147,9 @@ async def generate_and_sync(text: str = Form(...)):
         print("Unexpected error:", traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
-
 @app.get("/")
 def root():
     return {"message": "Unified TTS-LipSync Service running"}
-
 
 if __name__ == "__main__":
     import uvicorn
